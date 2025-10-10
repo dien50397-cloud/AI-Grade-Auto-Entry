@@ -1,20 +1,32 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# AI-Grade-Auto-Entry 🤖
 
-# Run and deploy your AI Studio app
+**Hệ thống tự động nhập điểm bài kiểm tra sử dụng Gemini API**
 
-This contains everything you need to run your app locally.
+Dự án này là một ứng dụng web (được tạo ra thông qua Google AI Studio) nhằm mục đích tự động hóa việc trích xuất và nhập điểm từ các bài kiểm tra được cung cấp dưới dạng hình ảnh hoặc văn bản, giảm thiểu sai sót và tăng tốc độ xử lý dữ liệu giáo dục.
 
-View your app in AI Studio: https://ai.studio/apps/drive/1WZ1A085gG2Y_Ua4VR4zgb3tGcCLCYMyR
+---
 
-## Run Locally
+## 🧠 Logic AI Cốt lõi (System Instruction)
 
-**Prerequisites:**  Node.js
+Logic cốt lõi của ứng dụng được xây dựng trên một Câu lệnh Hệ thống (System Instruction) cụ thể để hướng dẫn mô hình Gemini thực hiện tác vụ nhập điểm.
 
+### 1. Mô hình và Vị trí Code
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+* **Mô hình được sử dụng:** Gemini [**1.5 Flash** hoặc **1.5 Pro**]
+* **Vị trí Code Prompt:** Lời gọi API Gemini và Prompt chính được tìm thấy trong tệp **`App.tsx`** hoặc **`[TÊN TỆP DỊCH VỤ CỦA BẠN].ts`** (ví dụ: `geminiservice.ts`).
+
+### 2. Câu lệnh Hệ thống (Prompt)
+
+Dưới đây là Prompt chính được cung cấp cho mô hình:
+
+```markdown
+Bạn là một chuyên gia xử lý dữ liệu giáo dục. Nhiệm vụ của bạn là phân tích dữ liệu bài kiểm tra được cung cấp và trích xuất điểm số, sau đó chuyển đổi chúng thành định dạng JSON tiêu chuẩn.
+Quy tắc:
+1. Xác định tên học sinh, tên môn học, và điểm số cuối cùng.
+2. Đối với các điểm số có dấu phân thập phân (dấu chấm hoặc phẩy), hãy chuyển đổi thành dấu phẩy (,) để chuẩn hóa cho Microsoft Excel.
+3. Luôn trả về dữ liệu dưới định dạng JSON sau:
+{
+  "student_name": "Tên Học Sinh",
+  "subject": "Tên Môn Học",
+  "final_score": "Điểm chuẩn hóa (ví dụ: 8,5)"
+}
