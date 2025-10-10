@@ -1,0 +1,5 @@
+{
+  "name": "Gemini Test Score Extractor",
+  "description": "An application to automatically extract student names and scores from images of test papers using Gemini and export the results.",
+  "requestFramePermissions": []
+}
