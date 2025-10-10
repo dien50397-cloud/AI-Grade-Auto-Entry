@@ -1,8 +1,8 @@
 
 import React, { useState, useCallback, useRef } from 'react';
 import { extractDataFromImage } from './GeminiService';
-import { ResultsTable } from './components/ResultsTable';
-import { CsvIcon, SpinnerIcon, UploadIcon } from './components/icons';
+import { ResultsTable } from './ResultsTable';
+import { CsvIcon, SpinnerIcon, UploadIcon } from './icons';
 import type { ExtractionResult } from './types';
 
 export default function App() {
