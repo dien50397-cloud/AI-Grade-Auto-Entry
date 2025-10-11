@@ -84,18 +84,19 @@ export default function App() {
 const downloadCSV = () => {
     const successfulResults = results.filter(r => r.status === 'success');
     if (successfulResults.length === 0) {
-      alert("No successful extractions to download.");
+      alert("Không có kết quả trích xuất thành công để tải về.");
       return;
     }
 
-    const headers = ['"ten_hoc_sinh"', '"diem_so"', '"file_name"'];
+    // Đã thay đổi: Tiêu đề cột tiếng Việt
+    const headers = ['"Tên học sinh"', '"Điểm số"', '"Tên file"'];
     const rows = successfulResults.map(r => 
       [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`, `"${r.fileName}"`].join(',')
     );
 
     const csvContent = [headers.join(','), ...rows].join('\n');
     
-    // Dòng ĐÃ SỬA: Thêm Byte Order Mark ('\uFEFF') để buộc Excel dùng UTF-8
+    // Đã sửa: Thêm BOM ('\uFEFF') để buộc Excel dùng mã hóa UTF-8
     const blob = new Blob(['\uFEFF', csvContent], { type: 'text/csv;charset=utf-8;' }); 
     
     const link = document.createElement('a');
