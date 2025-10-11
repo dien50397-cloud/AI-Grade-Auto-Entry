@@ -88,15 +88,15 @@ const downloadCSV = () => {
       return;
     }
 
-    // Đã thay đổi: Tiêu đề cột tiếng Việt
-    const headers = ['"Tên học sinh"', '"Điểm số"', '"Tên file"'];
+    // Dấu chấm phẩy (;) được sử dụng làm dấu phân cách cột
+    const headers = ['"Tên học sinh"', '"Điểm số"', '"Tên file"'].join(';');
     const rows = successfulResults.map(r => 
-      [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`, `"${r.fileName}"`].join(',')
+      [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`, `"${r.fileName}"`].join(';') // Dấu phân cách mới
     );
 
-    const csvContent = [headers.join(','), ...rows].join('\n');
+    const csvContent = [headers, ...rows].join('\n');
     
-    // Đã sửa: Thêm BOM ('\uFEFF') để buộc Excel dùng mã hóa UTF-8
+    // Giữ lại BOM để hiển thị Tiếng Việt có dấu chính xác
     const blob = new Blob(['\uFEFF', csvContent], { type: 'text/csv;charset=utf-8;' }); 
     
     const link = document.createElement('a');
