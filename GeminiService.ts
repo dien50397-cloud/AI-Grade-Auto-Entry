@@ -14,7 +14,8 @@ const fileToGenerativePart = async (file: File) => {
 };
 
 // Make sure to set the API_KEY in your environment variables.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY as string });
+// Sử dụng "import.meta.env" là cú pháp chuẩn của Vite để đọc biến công khai.
 
 export const extractDataFromImage = async (imageFile: File): Promise<StudentScore> => {
     const model = 'gemini-2.5-flash';
