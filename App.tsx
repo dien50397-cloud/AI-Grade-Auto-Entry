@@ -133,4 +133,84 @@ export default function App() {
     e.preventDefault();
     e.stopPropagation();
     if (e.type === "dragenter" || e.type === "dragover") {
+      setDragActive(true);
+    } else if (e.type === "dragleave") {
+      setDragActive(false);
+    }
+  };
+  
+  const onButtonClick = () => {
+    fileInputRef.current?.click();
+  };
+  
+
+  return (
+    // Áp dụng màu nền phụ (shadow)
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8" onDragEnter={handleDrag}>
+        {/* KHỐI CHỌN MÀU QUANG PHỔ */}
+        <div className="absolute top-4 right-4 p-3 bg-white rounded-lg shadow-md flex items-center space-x-3">
+            <label htmlFor="colorPicker" className="text-sm font-semibold text-gray-700">Chọn Màu Nhấn:</label>
+            <input
+                id="colorPicker"
+                type="color"
+                value={accentColor}
+                onChange={(e) => setAccentColor(e.target.value)}
+                className="w-10 h-10 cursor-pointer rounded-full p-0 border-none overflow-hidden"
+                style={{ backgroundColor: accentColor }}
+            />
+        </div>
+
+      <main 
+        className={`w-full max-w-4xl mx-auto bg-white p-6 sm:p-8 lg:p-10 rounded-2xl shadow-xl shadow-amber-100 transition-shadow duration-300`} 
+        style={{ boxShadow: `0 25px 50px -12px rgba(255, 255, 255, 0.4), 0 0 0 1px ${accentColor}1a` }}
+        > 
+        <div className="text-center">
+            {/* Sửa tiêu đề dùng màu Hex */}
+            <h1 className="text-3xl sm:text-4xl font-bold" style={{ color: accentColor }}>Trích xuất điểm thi tự động</h1>
+            <p className="mt-2 text-md text-slate-600">Tải ảnh các bài kiểm tra lên để trích xuất tên học sinh và điểm số.</p>
+        </div>
+
+        <div className="mt-8">
+          <form id="form-file-upload" className="relative w-full" onDragEnter={handleDrag} onSubmit={(e) => e.preventDefault()}>
+            <input ref={fileInputRef} type="file" id="input-file-upload" multiple={true} accept="image/png, image/jpeg, image/jpg" className="hidden" onChange={handleFileChange} />
+            {/* Hộp tải lên TỐI GIẢN và TƯƠI SÁNG (dùng màu động) */}
+            <label id="label-file-upload" htmlFor="input-file-upload" 
+                className={`h-40 border-2 rounded-lg flex flex-col justify-center items-center cursor-pointer transition-all duration-300 `} 
+                style={{ borderColor: accentColor, backgroundColor: dragActive ? `${accentColor}1a` : '#f8fafc' }}
+                onDragLeave={handleDrag} onDragOver={handleDrag} onDrop={handleDrop}>
+                <UploadIcon className="w-12 h-12 mb-2" style={{ color: accentColor }} />
+                <p className="font-semibold" style={{ color: accentColor }}>Kéo và thả file tại đây</p>
+                <button type="button" onClick={onButtonClick} 
+                    className="mt-2 rounded-lg bg-white px-4 py-2 text-sm font-bold text-white shadow-md transition-colors"
+                    style={{ backgroundColor: accentColor, color: 'white' }}>
+                    Chọn File
+                </button>
+            </label>
+          </form>
+          {files.length > 0 && (
+            <div className="mt-4 text-sm text-slate-600">
+              <p className="font-semibold">Selected Files (Tự động xử lý):</p>
+              <ul className="list-disc list-inside max-h-32 overflow-y-auto mt-1">
+                {files.map((file, i) => <li key={i} className="truncate">{file.name}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        {/* Xóa nút Xử lý chính vì đã tự động hóa */}
+        <div className="mt-8 flex flex-col sm:flex-row justify-center items-center gap-4">
+            {/* Sử dụng màu động cho trạng thái xử lý */}
+            {isLoading && <p className="mt-4 text-center text-sm animate-pulse" style={{ color: accentColor }}>{processingStatus || 'Đang chờ xử lý...'}</p>}
+        </div>
+
+        {error && <p className="mt-4 text-center text-red-500">{error}</p>}
+        
+        <ResultsTable results={results} />
+      </main>
+      <footer className="w-full max-w-4xl mx-auto text-center mt-6">
+        <p className="text-sm text-slate-500">Powered by Google Gemini</p>
+      </footer>
+    </div>
+  );
+}
       set
