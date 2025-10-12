@@ -20,22 +20,35 @@ const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY as stri
 export const extractDataFromImage = async (imageFile: File): Promise<StudentScore> => {
     const model = 'gemini-2.5-flash';
     const imagePart = await fileToGenerativePart(imageFile);
-    const prompt = `From this image of a test paper, identify the student's full name and their score. Return the result strictly as a clean JSON object with two keys: 'ten_hoc_sinh' and 'diem_so'. Do not include any other text. If the name or score is unclear, return an empty string for the respective value.`;
+    const prompt = `Bạn là một CHUYÊN GIA PHÂN TÍCH BÀI KIỂM TRA. Từ hình ảnh bài kiểm tra/danh sách điểm này, hãy trích xuất **TẤT CẢ** các cặp Tên học sinh và Điểm số mà bạn tìm thấy.
 
-    const responseSchema = {
+YÊU CẦU:
+1. Trích xuất **tất cả** học sinh (nếu có nhiều hơn một).
+2. Tên phải giữ nguyên 100% các ký tự Tiếng Việt có dấu.
+3. Điểm số phải là giá trị số duy nhất, không làm tròn.
+
+ĐẦU RA:
+- Trả về kết quả dưới dạng **MỘT MẢNG JSON** theo cấu trúc đã định nghĩa.
+- Nếu không tìm thấy học sinh nào, trả về một mảng rỗng (empty array).`;
+
+   const responseSchema = {
+    // Kiểu dữ liệu chính là MẢNG (ARRAY)
+    type: Type.ARRAY, 
+    items: {
         type: Type.OBJECT,
         properties: {
             ten_hoc_sinh: {
                 type: Type.STRING,
-                description: "Student's full name.",
+                description: "Họ tên đầy đủ của học sinh (giữ nguyên dấu tiếng Việt)."
             },
             diem_so: {
                 type: Type.STRING,
-                description: "Student's score, can be a number or text like 'A+'."
+                description: "Điểm số cuối cùng dưới dạng số (ví dụ: 8.5, 10.0)."
             }
         },
         required: ['ten_hoc_sinh', 'diem_so'],
-    };
+    },
+};
 
     try {
         const response = await ai.models.generateContent({
