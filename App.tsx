@@ -57,12 +57,12 @@ export default function App() {
         setProcessingStatus(`Đang xử lý file ${i + 1} of ${files.length}: ${files[i].name}`);
         const file = files[i];
         try {
-            // HÀM NÀY GIỜ TRẢ VỀ MỘT MẢNG KẾT QUẢ
+            // HÀM NÀY ĐÃ ĐƯỢC CẤU HÌNH ĐỂ TRẢ VỀ MẢNG KẾT QUẢ
             const extractedData = await extractDataFromImage(file);
              
-            // Kiểm tra xem kết quả có phải là MẢNG và chứa dữ liệu không
+            // Xử lý và kiểm tra mảng kết quả
             if (Array.isArray(extractedData) && extractedData.length > 0) {
-                // Lặp qua TẤT CẢ các kết quả trong mảng (multiple scores)
+                // Lặp qua TẤT CẢ các kết quả trong mảng
                 extractedData.forEach(data => {
                     newResults.push({
                         status: 'success',
@@ -113,8 +113,7 @@ const downloadCSV = () => {
 
     const csvContent = [headers, ...rows].join('\n');
     
-    // THÊM FIX: Dòng 'sep=,' để buộc Excel sử dụng Dấu phẩy làm dấu phân cách
-    // và thêm BOM để hiển thị Tiếng Việt
+    // ĐÃ SỬA: Thêm 'sep=,' để buộc Excel dùng dấu phẩy và thêm BOM
     const blob = new Blob(['\uFEFF', 'sep=,\n', csvContent], { type: 'text/csv;charset=utf-8;' }); 
     
     const link = document.createElement('a');
@@ -130,11 +129,10 @@ const downloadCSV = () => {
   const hasSuccessfulResults = results.some(r => r.status === 'success');
 
   return (
-    // Sửa main container và bóng
+    // Đã thêm màu tươi sáng (Teal) và bóng (Amber)
     <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8" onDragEnter={handleDrag}>
       <main className="w-full max-w-4xl mx-auto bg-white p-6 sm:p-8 lg:p-10 rounded-2xl shadow-xl shadow-amber-100"> 
         <div className="text-center">
-            {/* Sửa tiêu đề */}
             <h1 className="text-3xl sm:text-4xl font-bold text-teal-800">Trích xuất điểm thi tự động</h1>
             <p className="mt-2 text-md text-slate-600">Tải ảnh các bài kiểm tra lên để trích xuất tên học sinh và điểm số.</p>
         </div>
@@ -142,8 +140,8 @@ const downloadCSV = () => {
         <div className="mt-8">
           <form id="form-file-upload" className="relative w-full" onDragEnter={handleDrag} onSubmit={(e) => e.preventDefault()}>
             <input ref={fileInputRef} type="file" id="input-file-upload" multiple={true} accept="image/png, image/jpeg, image/jpg" className="hidden" onChange={handleFileChange} />
-            {/* Sửa hộp tải lên */}
-            <label id="label-file-upload" htmlFor="input-file-upload" className={`h-64 border-2 rounded-lg flex flex-col justify-center items-center cursor-pointer transition-colors ${dragActive ? "border-teal-500 bg-teal-100" : "border-dashed border-teal-300 bg-teal-50 hover:bg-teal-100"}`} onDragLeave={handleDrag} onDragOver={handleDrag} onDrop={handleDrop}>
+            {/* Hộp tải lên TỐI GIẢN (h-40) và tươi sáng (Teal) */}
+            <label id="label-file-upload" htmlFor="input-file-upload" className={`h-40 border-2 rounded-lg flex flex-col justify-center items-center cursor-pointer transition-colors ${dragActive ? "border-teal-500 bg-teal-100" : "border-dashed border-teal-300 bg-teal-50 hover:bg-teal-100"}`} onDragLeave={handleDrag} onDragOver={handleDrag} onDrop={handleDrop}>
                 <UploadIcon className="w-12 h-12 text-teal-400 mb-2" />
                 <p className="font-semibold text-teal-800">Kéo và thả file tại đây hoặc</p>
                 <button type="button" onClick={onButtonClick} className="mt-2 rounded-md bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50">
@@ -162,7 +160,7 @@ const downloadCSV = () => {
         </div>
 
         <div className="mt-8 flex flex-col sm:flex-row justify-center items-center gap-4">
-            {/* Sửa nút xử lý chính */}
+            {/* Nút xử lý chính (Màu Teal) */}
           <button
             onClick={handleProcessFiles}
             disabled={files.length === 0 || isLoading}
