@@ -31,26 +31,7 @@ YÊU CẦU:
 - Trả về kết quả dưới dạng **MỘT MẢNG JSON** theo cấu trúc đã định nghĩa.
 - Nếu không tìm thấy học sinh nào, trả về một mảng rỗng (empty array).`;
 
-   const responseSchema = {
-    // Kiểu dữ liệu chính là MẢNG (ARRAY)
-    type: Type.ARRAY, 
-    items: {
-        type: Type.OBJECT,
-        properties: {
-            ten_hoc_sinh: {
-                type: Type.STRING,
-                description: "Họ tên đầy đủ của học sinh (giữ nguyên dấu tiếng Việt)."
-            },
-            diem_so: {
-                type: Type.STRING,
-                description: "Điểm số cuối cùng dưới dạng số (ví dụ: 8.5, 10.0)."
-            }
-        },
-        required: ['ten_hoc_sinh', 'diem_so'],
-    },
-};
-
-    try {
+ try {
         const response = await ai.models.generateContent({
             model: model,
             contents: { parts: [imagePart, { text: prompt }] },
@@ -63,15 +44,30 @@ YÊU CẦU:
         const jsonText = response.text;
         const parsedData = JSON.parse(jsonText);
 
-        if (typeof parsedData.ten_hoc_sinh !== 'string' || !('diem_so' in parsedData)) {
-            throw new Error("Invalid JSON structure received from API.");
+        // --- MÃ ĐÃ SỬA LỖI LOGIC: XỬ LÝ ĐẦU RA LÀ MẢNG ---
+
+        // 1. Kiểm tra nghiêm ngặt: Đầu ra phải là một MẢNG
+        if (!Array.isArray(parsedData)) {
+            // Nếu không phải mảng, báo lỗi
+            throw new Error("API did not return a valid JSON array as requested. Check model output.");
         }
         
-        return {
-            ten_hoc_sinh: parsedData.ten_hoc_sinh,
-            diem_so: String(parsedData.diem_so)
-        };
+        // 2. Trả về toàn bộ MẢNG đã được trích xuất
+        // Mã App.tsx sẽ nhận mảng này và xử lý từng phần tử
+        return parsedData; 
 
+    } catch (error) {
+        console.error(`Error processing ${imageFile.name}:`, error);
+        if (error instanceof Error) {
+            // Thêm xử lý lỗi JSON chi tiết
+            if (error.message.includes('Unexpected token') || error.message.includes('JSON')) {
+                 throw new Error("Lỗi định dạng JSON từ API. Vui lòng thử lại.");
+            }
+            throw new Error(`API Error: ${error.message}`);
+        }
+        throw new Error("An unknown error occurred during API call.");
+    }
+}; // Đảm bảo dấu ngoặc này kết thúc hàm extractDataFromImage
     } catch (error) {
         console.error(`Error processing ${imageFile.name}:`, error);
         if (error instanceof Error) {
