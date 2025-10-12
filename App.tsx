@@ -13,17 +13,17 @@ export default function App() {
   const [processingStatus, setProcessingStatus] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Hàm tải về CSV (Dùng TAB để chắc chắn tách cột)
+  // Hàm tải về CSV (Dùng TAB để chắc chắn tách cột)
   const downloadCSV = useCallback((finalResults: ExtractionResult[]) => {
     const successfulResults = finalResults.filter(r => r.status === 'success');
     if (successfulResults.length === 0) {
       return;
     }
 
-    // SỬ DỤNG KÝ TỰ TAB ('\t') LÀM DẤU PHÂN CÁCH CUỐI CÙNG
+    // SỬ DỤNG KÝ TỰ TAB ('\t') LÀM DẤU PHÂN CÁCH
     const headers = ['"Tên học sinh"', '"Điểm số"', '"Tên file"'].join('\t');
     const rows = successfulResults.map(r => 
-      // Thay đổi sang join('\t') để tách cột bằng ký tự Tab
+      // Sử dụng join('\t') để tách cột bằng ký tự Tab
       [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`, `"${r.fileName}"`].join('\t') 
     );
 
@@ -161,10 +161,10 @@ export default function App() {
           <form id="form-file-upload" className="relative w-full" onDragEnter={handleDrag} onSubmit={(e) => e.preventDefault()}>
             <input ref={fileInputRef} type="file" id="input-file-upload" multiple={true} accept="image/png, image/jpeg, image/jpg" className="hidden" onChange={handleFileChange} />
             {/* Hộp tải lên TỐI GIẢN (h-40) và tươi sáng (Teal) */}
-            <label id="label-file-upload" htmlFor="input-file-upload" className={`h-40 border-2 rounded-lg flex flex-col justify-center items-center cursor-pointer transition-colors ${dragActive ? "border-teal-500 bg-teal-100" : "border-dashed border-teal-300 bg-teal-50 hover:bg-teal-100"}`} onDragLeave={handleDrag} onDragOver={handleDrag} onDrop={handleDrop}>
-                <UploadIcon className="w-12 h-12 text-teal-400 mb-2" />
-                <p className="font-semibold text-teal-800">Kéo và thả file tại đây</p>
-                <button type="button" onClick={onButtonClick} className="mt-2 rounded-md bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50">
+            <label id="label-file-upload" htmlFor="input-file-upload" className={`h-40 border-2 rounded-lg flex flex-col justify-center items-center cursor-pointer transition-all duration-300 ${dragActive ? "border-indigo-600 bg-indigo-100 transform scale-105" : "border-dashed border-indigo-300 bg-gray-50 hover:bg-indigo-50"}`} onDragLeave={handleDrag} onDragOver={handleDrag} onDrop={handleDrop}>
+                <UploadIcon className="w-12 h-12 text-indigo-500 mb-2" />
+                <p className="font-semibold text-indigo-800">Kéo và thả file tại đây</p>
+                <button type="button" onClick={onButtonClick} className="mt-2 rounded-lg bg-indigo-500 px-4 py-2 text-sm font-bold text-white shadow-md hover:bg-indigo-600 transition-colors">
                     Chọn File
                 </button>
             </label>
