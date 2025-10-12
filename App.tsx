@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef } from 'react';
 import { extractDataFromImage } from './GeminiService';
 import { ResultsTable } from './ResultsTable';
 import { CsvIcon, SpinnerIcon, UploadIcon } from './icons';
-import type { ExtractionResult } from './types';
+import type { ExtractionResult } from '../types'; // Đã sửa đường dẫn types.ts
 
 export default function App() {
   const [files, setFiles] = useState<File[]>([]);
@@ -13,17 +13,17 @@ export default function App() {
   const [processingStatus, setProcessingStatus] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Hàm tải về CSV (ĐÃ SỬA CUỐI CÙNG: Dùng TAB để chắc chắn tách cột)
+  // Hàm tải về CSV (Đã sửa lỗi tách cột TAB)
   const downloadCSV = useCallback((finalResults: ExtractionResult[]) => {
     const successfulResults = finalResults.filter(r => r.status === 'success');
     if (successfulResults.length === 0) {
       return;
     }
 
-    // Sử dụng ký tự TAB ('\t') làm dấu phân cách
+    // Dấu phân cách được đặt là TAB ('\t')
     const headers = ['"Tên học sinh"', '"Điểm số"', '"Tên file"'].join('\t');
     const rows = successfulResults.map(r => 
-      // Thay đổi từ join(',') sang join('\t')
+      // Sử dụng join('\t') để tách cột bằng ký tự Tab
       [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`, `"${r.fileName}"`].join('\t') 
     );
 
@@ -170,4 +170,27 @@ export default function App() {
             </label>
           </form>
           {files.length > 0 && (
-            <div className="mt-4
+            <div className="mt-4 text-sm text-slate-600">
+              <p className="font-semibold">Selected Files (Tự động xử lý):</p>
+              <ul className="list-disc list-inside max-h-32 overflow-y-auto mt-1">
+                {files.map((file, i) => <li key={i} className="truncate">{file.name}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        {/* Xóa nút Xử lý chính vì đã tự động hóa */}
+        <div className="mt-8 flex flex-col sm:flex-row justify-center items-center gap-4">
+            {isLoading && <p className="mt-4 text-center text-sm text-teal-700 animate-pulse">{processingStatus || 'Đang chờ xử lý...'}</p>}
+        </div>
+
+        {error && <p className="mt-4 text-center text-red-500">{error}</p>}
+        
+        <ResultsTable results={results} />
+      </main>
+      <footer className="w-full max-w-4xl mx-auto text-center mt-6">
+        <p className="text-sm text-slate-500">Powered by Google Gemini</p>
+      </footer>
+    </div>
+  );
+}
