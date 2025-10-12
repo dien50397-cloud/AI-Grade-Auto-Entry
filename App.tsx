@@ -48,38 +48,56 @@ export default function App() {
   };
 
   const handleProcessFiles = useCallback(async () => {
-    if (files.length === 0) return;
-    setIsLoading(true);
-    setResults([]);
-    setError(null);
-    
-    const newResults: ExtractionResult[] = [];
-    for (let i = 0; i < files.length; i++) {
-        setProcessingStatus(`Processing file ${i + 1} of ${files.length}: ${files[i].name}`);
-        const file = files[i];
-        try {
-            const data = await extractDataFromImage(file);
-            newResults.push({
-                status: 'success',
-                fileName: file.name,
-                ten_hoc_sinh: data.ten_hoc_sinh,
-                diem_so: data.diem_so
-            });
-        } catch (err) {
-            newResults.push({
-                status: 'error',
-                fileName: file.name,
-                ten_hoc_sinh: '',
-                diem_so: '',
-                errorMessage: err instanceof Error ? err.message : 'Unknown error'
-            });
-        }
-    }
+    if (files.length === 0) return;
+    setIsLoading(true);
+    setResults([]);
+    setError(null);
+    
+    const newResults: ExtractionResult[] = [];
+    for (let i = 0; i < files.length; i++) {
+        setProcessingStatus(`Processing file ${i + 1} of ${files.length}: ${files[i].name}`);
+        const file = files[i];
+        try {
+            // HÀM NÀY GIỜ TRẢ VỀ MỘT MẢNG KẾT QUẢ
+            const extractedData = await extractDataFromImage(file);
+             
+            // Kiểm tra xem kết quả có phải là MẢNG và chứa dữ liệu không
+            if (Array.isArray(extractedData) && extractedData.length > 0) {
+                // Lặp qua TẤT CẢ các kết quả trong mảng (multiple scores)
+                extractedData.forEach(data => {
+                    newResults.push({
+                        status: 'success',
+                        fileName: file.name,
+                        ten_hoc_sinh: data.ten_hoc_sinh,
+                        diem_so: data.diem_so
+                    });
+                });
+            } else {
+                // Thêm kết quả rỗng nếu không có dữ liệu nào được trích xuất
+                newResults.push({
+                    status: 'error',
+                    fileName: file.name,
+                    ten_hoc_sinh: 'N/A',
+                    diem_so: 'N/A',
+                    errorMessage: 'Không trích xuất được dữ liệu.'
+                });
+            }
 
-    setResults(newResults);
-    setIsLoading(false);
-    setProcessingStatus('');
-  }, [files]);
+        } catch (err) {
+            newResults.push({
+                status: 'error',
+                fileName: file.name,
+                ten_hoc_sinh: 'N/A',
+                diem_so: 'N/A',
+                errorMessage: err instanceof Error ? err.message : 'Unknown error'
+            });
+        }
+    }
+
+    setResults(newResults);
+    setIsLoading(false);
+    setProcessingStatus('');
+  }, [files]);
 
 const downloadCSV = () => {
     const successfulResults = results.filter(r => r.status === 'success');
