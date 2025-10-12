@@ -68,11 +68,4 @@ YÊU CẦU:
         throw new Error("An unknown error occurred during API call.");
     }
 }; // Đảm bảo dấu ngoặc này kết thúc hàm extractDataFromImage
-    } catch (error) {
-        console.error(`Error processing ${imageFile.name}:`, error);
-        if (error instanceof Error) {
-            throw new Error(`API Error: ${error.message}`);
-        }
-        throw new Error("An unknown error occurred during API call.");
-    }
-};
+  
