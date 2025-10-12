@@ -14,18 +14,35 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Hàm tải về CSV (Dùng TAB để chắc chắn tách cột)
-  const downloadCSV = useCallback((finalResults: ExtractionResult[]) => {
+ // Thay thế toàn bộ hàm downloadCSV trong App.tsx bằng đoạn code này:
+const downloadCSV = useCallback((finalResults: ExtractionResult[]) => {
     const successfulResults = finalResults.filter(r => r.status === 'success');
     if (successfulResults.length === 0) {
       return;
     }
 
-    // SỬ DỤNG KÝ TỰ TAB ('\t') LÀM DẤU PHÂN CÁCH CUỐI CÙNG
+    // SỬ DỤNG KÝ TỰ TAB ('\t') LÀM DẤU PHÂN CÁCH
     const headers = ['"Tên học sinh"', '"Điểm số"', '"Tên file"'].join('\t');
     const rows = successfulResults.map(r => 
       // Thay đổi sang join('\t') để tách cột bằng ký tự Tab
-      [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`, `"${r.fileName}"`].join('\t') 
+      [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`, `"${r.fileName}"`].join('\t') 
     );
+
+    const csvContent = [headers, ...rows].join('\n');
+    
+    // Giữ lại BOM ('\uFEFF') để buộc Excel hiển thị Tiếng Việt
+    const blob = new Blob(['\uFEFF', csvContent], { type: 'text/csv;charset=utf-8;' }); 
+    
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'diem_so_hoc_sinh.csv');
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click(); // Kích hoạt tải về
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, []);
 
     const csvContent = [headers, ...rows].join('\n');
     
