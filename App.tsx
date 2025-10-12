@@ -4,8 +4,7 @@ import { ResultsTable } from './ResultsTable';
 import { CsvIcon, SpinnerIcon, UploadIcon } from './icons';
 import type { ExtractionResult } from './types';
 
-// CHÚ Ý QUAN TRỌNG: Hàm handleProcessFiles đã được sửa để nhận files trực tiếp
-// và thực hiện auto-download.
+// CHÚ Ý: Đảm bảo bạn đã sửa lỗi logic MẢNG trong GeminiService.ts!
 
 export default function App() {
   const [files, setFiles] = useState<File[]>([]);
@@ -15,25 +14,25 @@ export default function App() {
   const [dragActive, setDragActive] = useState<boolean>(false);
   const [processingStatus, setProcessingStatus] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
-  // Hàm tải về CSV (đã sửa lỗi tách cột và BOM)
+
+  // Hàm tải về CSV (ĐÃ SỬA: Dùng TAB để chắc chắn tách cột)
   const downloadCSV = useCallback((finalResults: ExtractionResult[]) => {
     const successfulResults = finalResults.filter(r => r.status === 'success');
     if (successfulResults.length === 0) {
-      // alert("Không có kết quả trích xuất thành công để tải về."); // Bỏ alert khi tự động
       return;
     }
 
-    // Dấu phẩy (,) được sử dụng làm dấu phân cách
-    const headers = ['"Tên học sinh"', '"Điểm số"', '"Tên file"'].join(',');
+    // Dấu phân cách được đặt là TAB ('\t')
+    const headers = ['"Tên học sinh"', '"Điểm số"', '"Tên file"'].join('\t');
     const rows = successfulResults.map(r => 
-      [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`, `"${r.fileName}"`].join(',')
+      // Sử dụng join('\t') để tách cột bằng ký tự Tab
+      [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`, `"${r.fileName}"`].join('\t') 
     );
 
     const csvContent = [headers, ...rows].join('\n');
     
-    // THÊM FIX: Dòng 'sep=,' để buộc Excel sử dụng Dấu phẩy và thêm BOM
-    const blob = new Blob(['\uFEFF', 'sep=,\n', csvContent], { type: 'text/csv;charset=utf-8;' }); 
+    // Giữ lại BOM ('\uFEFF') để buộc Excel hiển thị Tiếng Việt
+    const blob = new Blob(['\uFEFF', csvContent], { type: 'text/csv;charset=utf-8;' }); 
     
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
@@ -62,7 +61,9 @@ export default function App() {
             // HÀM NÀY ĐƯỢC CẤU HÌNH ĐỂ TRẢ VỀ MẢNG KẾT QUẢ
             const extractedData = await extractDataFromImage(file);
              
+            // Xử lý và kiểm tra mảng kết quả
             if (Array.isArray(extractedData) && extractedData.length > 0) {
+                // Lặp qua TẤT CẢ các kết quả trong mảng
                 extractedData.forEach(data => {
                     newResults.push({
                         status: 'success',
@@ -72,6 +73,7 @@ export default function App() {
                     });
                 });
             } else {
+                // Thêm kết quả rỗng nếu không có dữ liệu nào được trích xuất
                 newResults.push({
                     status: 'error',
                     fileName: file.name,
@@ -101,9 +103,9 @@ export default function App() {
         downloadCSV(newResults);
     }
     
-  }, [downloadCSV]); // Chỉ cần downloadCSV trong dependencies
+  }, [downloadCSV]); // Phụ thuộc vào downloadCSV
 
-  
+
   // Hàm xử lý thay đổi tệp (TỰ ĐỘNG XỬ LÝ)
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -146,7 +148,6 @@ export default function App() {
     fileInputRef.current?.click();
   };
   
-  // const hasSuccessfulResults = results.some(r => r.status === 'success'); // Không cần thiết ở đây
 
   return (
     // Sửa main container và bóng
@@ -182,9 +183,7 @@ export default function App() {
 
         {/* Xóa nút Xử lý chính vì đã tự động hóa */}
         <div className="mt-8 flex flex-col sm:flex-row justify-center items-center gap-4">
-            {isLoading && <p className="mt-4 text-center text-sm text-teal-700 animate-pulse">
-                {processingStatus || 'Đang chờ xử lý...'}
-            </p>}
+            {isLoading && <p className="mt-4 text-center text-sm text-teal-700 animate-pulse">{processingStatus || 'Đang chờ xử lý...'}</p>}
         </div>
 
         {error && <p className="mt-4 text-center text-red-500">{error}</p>}
