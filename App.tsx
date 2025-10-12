@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef } from 'react';
 import { extractDataFromImage } from './GeminiService';
 import { ResultsTable } from './ResultsTable';
 import { CsvIcon, SpinnerIcon, UploadIcon } from './icons';
-import type { ExtractionResult } from '../types'; // Đã sửa đường dẫn types.ts
+import type { ExtractionResult } from './types';
 
 export default function App() {
   const [files, setFiles] = useState<File[]>([]);
@@ -13,17 +13,17 @@ export default function App() {
   const [processingStatus, setProcessingStatus] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Hàm tải về CSV (Đã sửa lỗi tách cột TAB)
+  // Hàm tải về CSV (Dùng TAB để chắc chắn tách cột)
   const downloadCSV = useCallback((finalResults: ExtractionResult[]) => {
     const successfulResults = finalResults.filter(r => r.status === 'success');
     if (successfulResults.length === 0) {
       return;
     }
 
-    // Dấu phân cách được đặt là TAB ('\t')
+    // SỬ DỤNG KÝ TỰ TAB ('\t') LÀM DẤU PHÂN CÁCH CUỐI CÙNG
     const headers = ['"Tên học sinh"', '"Điểm số"', '"Tên file"'].join('\t');
     const rows = successfulResults.map(r => 
-      // Sử dụng join('\t') để tách cột bằng ký tự Tab
+      // Thay đổi sang join('\t') để tách cột bằng ký tự Tab
       [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`, `"${r.fileName}"`].join('\t') 
     );
 
