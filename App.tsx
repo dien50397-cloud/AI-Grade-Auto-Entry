@@ -250,16 +250,16 @@ export default function App() {
     }, [apiKey]);
 
 
-    // Hàm tải về CSV (ĐÃ SỬA LỖI ĐỊNH DẠNG CSV)
+    // Hàm tải về CSV (ĐÃ SỬA LỖI ĐỊNH DẠNG CSV VĨNH VIỄN)
     const downloadCSV = useCallback((finalResults) => {
         const successfulResults = finalResults.filter(r => r.status === 'success');
         if (successfulResults.length === 0) return;
 
         // CHỈ BAO GỒM: Tên học sinh và Điểm số
-        // LỖI ĐÃ KHẮC PHỤC: Sử dụng dấu phẩy (comma) làm ký tự phân tách
-        const headers = ['"Tên học sinh"', '"Điểm số"'].join(','); 
+        // SỬ DỤNG DẤU CHẤM PHẨY (;) LÀM KÝ TỰ PHÂN TÁCH CHO EXCEL VIỆT NAM
+        const headers = ['"Tên học sinh"', '"Điểm số"'].join(';'); 
         const rows = successfulResults.map(r =>
-            [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`].join(',') 
+            [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`].join(';') 
         );
 
         const csvContent = [headers, ...rows].join('\n');
@@ -383,7 +383,7 @@ export default function App() {
         fileInputRef.current?.click();
     };
     
-    // Nếu API key đang trong quá trình tải hoặc bị thiếu, hiển thị thông báo
+    // Phần hiển thị TẢI/LỖI API KEY (React sẽ render an toàn)
     if (apiKey === null) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-900 p-4">
