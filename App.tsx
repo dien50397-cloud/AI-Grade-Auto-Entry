@@ -1,216 +1,479 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { extractDataFromImage } from './GeminiService';
-import { ResultsTable } from './ResultsTable';
-import { CsvIcon, SpinnerIcon, UploadIcon } from './icons';
-import type { ExtractionResult } from './types';
 
-// Hàm mặc định này sẽ bị xóa vì chúng ta dùng màu Hex trực tiếp
-// const getColorClasses = (color: string, type: 'text' | 'bg' | 'border') => { ... };
+// =======================================================
+// 1. TYPES & API SERVICE
+// =======================================================
+
+/**
+ * Định nghĩa kiểu dữ liệu cho kết quả trích xuất
+ * @typedef {object} StudentScore
+ * @property {string} ten_hoc_sinh
+ * @property {string} diem_so
+ */
+
+/**
+ * Định nghĩa kiểu dữ liệu cho kết quả hiển thị
+ * @typedef {object} ExtractionResult
+ * @property {'success' | 'error'} status
+ * @property {string} fileName
+ * @property {string} ten_hoc_sinh
+ * @property {string} diem_so
+ * @property {string} [errorMessage]
+ */
+
+// HÀM KIỂM TRA MÔI TRƯỜNG ĐỂ LẤY KHÓA API
+const getApiKey = () => {
+    // 1. Kiểm tra biến an toàn của môi trường code editor (nếu tồn tại)
+    if (typeof __api_key !== 'undefined') {
+        return __api_key;
+    }
+    // 2. Kiểm tra biến môi trường VITE/Netlify
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+        return import.meta.env.VITE_GEMINI_API_KEY || "";
+    }
+    // 3. Trả về rỗng nếu không tìm thấy
+    return "";
+};
+
+
+const GEMINI_API_KEY = getApiKey();
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
+
+/**
+ * Hàm chuyển đổi tệp hình ảnh thành định dạng Base64
+ */
+const fileToGenerativePart = async (file) => {
+    const base64EncodedDataPromise = new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result.split(',')[1]);
+        reader.readAsDataURL(file);
+    });
+    return {
+        inlineData: { data: await base64EncodedDataPromise, mimeType: file.type },
+    };
+};
+
+/**
+ * Hàm gọi API Gemini để trích xuất dữ liệu
+ * @param {File} imageFile 
+ * @returns {Promise<StudentScore[]>}
+ */
+const extractDataFromImage = async (imageFile) => {
+    // Kiểm tra khóa API để đưa ra thông báo lỗi rõ ràng hơn
+    if (!GEMINI_API_KEY) {
+        throw new Error("API Key chưa được thiết lập. Vui lòng kiểm tra biến môi trường.");
+    }
+
+    const model = 'gemini-2.5-flash-preview-05-20';
+    const imagePart = await fileToGenerativePart(imageFile);
+    
+    // Prompt yêu cầu trích xuất tên và điểm
+    const prompt = `Bạn là một CHUYÊN GIA PHÂN TÍCH BÀI KIỂM TRA. Từ hình ảnh danh sách điểm, hãy trích xuất **TẤT CẢ** các cặp Tên học sinh và Tổng điểm mà bạn tìm thấy. 
+YÊU CẦU: 1. Trích xuất tất cả học sinh. 2. Tên phải giữ nguyên Tiếng Việt có dấu. 3. Điểm số phải là giá trị số. Trả về MẢNG JSON.`;
+
+    const responseSchema = {
+        type: "ARRAY",
+        items: {
+            type: "OBJECT",
+            properties: {
+                ten_hoc_sinh: { type: "STRING", description: "Họ tên đầy đủ của học sinh." },
+                diem_so: { type: "STRING", description: "Điểm số cuối cùng (ví dụ: 8.5, 10.0)." }
+            },
+            required: ['ten_hoc_sinh', 'diem_so'],
+        },
+    };
+
+    const payload = {
+        contents: [{ parts: [imagePart, { text: prompt }] }],
+        generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: responseSchema,
+        },
+    };
+
+    // Áp dụng tính năng Retry (Backoff) để xử lý lỗi mạng/throttling
+    const MAX_RETRIES = 3;
+    let lastError = null;
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        try {
+            const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                const jsonText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                if (!jsonText) {
+                    throw new Error("Không nhận được nội dung phản hồi từ API.");
+                }
+            
+                const parsedData = JSON.parse(jsonText);
+                if (!Array.isArray(parsedData)) {
+                    throw new Error("Đầu ra JSON không phải là Mảng hợp lệ.");
+                }
+                return parsedData;
+
+            } else if (response.status === 429 || response.status >= 500) {
+                // Throttling hoặc Server Error: thử lại
+                lastError = new Error(`API call failed with status ${response.status}. Retrying...`);
+                await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000)); // Exponential Backoff
+                continue;
+            } else {
+                // Các lỗi khác (400, 401, 403): không thử lại
+                throw new Error(`API call failed with status ${response.status}: ${response.statusText}`);
+            }
+
+        } catch (e) {
+            if (e.message.includes('Retrying')) {
+                lastError = e;
+                continue;
+            }
+            throw new Error(`Lỗi mạng hoặc cú pháp: ${e.message}`);
+        }
+    }
+
+    if (lastError) {
+        throw new Error(`API đã thất bại sau ${MAX_RETRIES} lần thử. ${lastError.message}`);
+    }
+};
+
+// =======================================================
+// 2. ICON COMPONENTS
+// =======================================================
+
+const UploadIcon = (props) => (
+    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-upload">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" x2="12" y1="3" y2="15" />
+    </svg>
+);
+
+const SpinnerIcon = (props) => (
+    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-loader-2 animate-spin">
+        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </svg>
+);
+
+const CsvIcon = (props) => (
+    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-file-text">
+        <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v4a2 2 0 0 0 2 2h4" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" />
+    </svg>
+);
+
+
+// =======================================================
+// 3. RESULTS TABLE COMPONENT
+// =======================================================
+
+/**
+ * Component hiển thị kết quả trích xuất
+ * @param {{results: ExtractionResult[]}} props
+ */
+const ResultsTable = ({ results }) => {
+    if (results.length === 0) return null;
+
+    const successfulCount = results.filter(r => r.status === 'success').length;
+    const errorCount = results.filter(r => r.status === 'error').length;
+
+    return (
+        <div className="mt-10 overflow-x-auto shadow-lg rounded-xl">
+            <h2 className="text-xl font-bold p-4 bg-slate-50 text-slate-800 rounded-t-xl">
+                Kết quả Trích xuất ({successfulCount} thành công, {errorCount} lỗi)
+            </h2>
+            <table className="min-w-full divide-y divide-slate-200">
+                <thead className="bg-slate-100">
+                    <tr>
+                        <th className="px-4 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Trạng thái</th>
+                        <th className="px-4 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Tên File</th>
+                        <th className="px-4 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Tên Học sinh</th>
+                        <th className="px-4 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Điểm số</th>
+                    </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-slate-100">
+                    {results.map((result, index) => (
+                        <tr key={index} className={result.status === 'error' ? 'bg-red-50 hover:bg-red-100 transition-colors' : 'hover:bg-green-50 transition-colors'}>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${result.status === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                    {result.status === 'success' ? 'Thành công' : 'Lỗi'}
+                                </span>
+                            </td>
+                            <td className="px-4 py-3 text-sm text-slate-900 truncate max-w-[150px]">{result.fileName}</td>
+                            <td className="px-4 py-3 text-sm text-slate-700 font-medium">{result.ten_hoc_sinh}</td>
+                            <td className="px-4 py-3 text-sm font-bold text-slate-900">
+                                {result.status === 'success' ? result.diem_so : (
+                                    <span className="text-red-500 italic text-xs" title={result.errorMessage}>
+                                        {result.errorMessage || 'Lỗi chung'}
+                                    </span>
+                                )}
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+};
+
+
+// =======================================================
+// 4. MAIN APP COMPONENT
+// =======================================================
 
 export default function App() {
-  const [files, setFiles] = useState<File[]>([]);
-  const [results, setResults] = useState<ExtractionResult[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-  const [dragActive, setDragActive] = useState<boolean>(false);
-  const [processingStatus, setProcessingStatus] = useState<string>('');
-  // State màu nền đã chuyển sang dùng mã Hex mặc định của Teal
-  const [accentColor, setAccentColor] = useState<string>('#0d9488'); 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+    /** @type {[File[], React.Dispatch<React.SetStateAction<File[]>>]} */
+    const [files, setFiles] = useState([]);
+    /** @type {[ExtractionResult[], React.Dispatch<React.SetStateAction<ExtractionResult[]>>]} */
+    const [results, setResults] = useState([]);
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState(null);
+    const [dragActive, setDragActive] = useState(false);
+    const [processingStatus, setProcessingStatus] = useState('');
+    const [accentColor, setAccentColor] = useState('#0d9488'); // Màu Teal mặc định
+    const fileInputRef = useRef(null);
 
-  // Hàm tải về CSV (Không đổi)
-  const downloadCSV = useCallback((finalResults: ExtractionResult[]) => {
-    const successfulResults = finalResults.filter(r => r.status === 'success');
-    if (successfulResults.length === 0) {
-      return;
-    }
+    // Hàm tải về CSV
+    const downloadCSV = useCallback((finalResults) => {
+        const successfulResults = finalResults.filter(r => r.status === 'success');
+        if (successfulResults.length === 0) return;
 
-    const headers = ['"Tên học sinh"', '"Điểm số"', '"Tên file"'].join('\t');
-    const rows = successfulResults.map(r => 
-      [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`, `"${r.fileName}"`].join('\t') 
-    );
+        const headers = ['"Tên học sinh"', '"Điểm số"', '"Tên file"'].join('\t');
+        const rows = successfulResults.map(r =>
+            [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`, `"${r.fileName}"`].join('\t')
+        );
 
-    const csvContent = [headers, ...rows].join('\n');
-    
-    const blob = new Blob(['\uFEFF', csvContent], { type: 'text/csv;charset=utf-8;' }); 
-    
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', 'diem_so_hoc_sinh.csv');
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click(); 
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  }, []);
+        const csvContent = [headers, ...rows].join('\n');
+        
+        // Thêm BOM (Byte Order Mark) để đảm bảo hiển thị tiếng Việt có dấu trong Excel
+        const blob = new Blob(['\uFEFF', csvContent], { type: 'text/csv;charset=utf-8;' });
+        
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', 'diem_so_hoc_sinh.csv');
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    }, []);
 
+    // Hàm xử lý chính (Auto-processing)
+    const handleProcessFiles = useCallback(async (filesToProcess) => {
+        if (filesToProcess.length === 0) return;
+        setIsLoading(true);
+        setResults([]);
+        setError(null);
+        
+        /** @type {ExtractionResult[]} */
+        const newResults = [];
+        
+        for (let i = 0; i < filesToProcess.length; i++) {
+            const file = filesToProcess[i];
+            setProcessingStatus(`Đang xử lý file ${i + 1} of ${filesToProcess.length}: ${file.name}`);
+            
+            try {
+                // Gọi API để trích xuất dữ liệu
+                const extractedData = await extractDataFromImage(file);
+                
+                if (Array.isArray(extractedData) && extractedData.length > 0) {
+                    extractedData.forEach(data => {
+                        newResults.push({
+                            status: 'success',
+                            fileName: file.name,
+                            ten_hoc_sinh: data.ten_hoc_sinh || 'N/A',
+                            diem_so: data.diem_so || 'N/A'
+                        });
+                    });
+                } else {
+                    newResults.push({
+                        status: 'error',
+                        fileName: file.name,
+                        ten_hoc_sinh: 'N/A',
+                        diem_so: 'N/A',
+                        errorMessage: 'Không trích xuất được dữ liệu hợp lệ.'
+                    });
+                }
 
-  // Hàm xử lý chính (Auto-processing)
-  const handleProcessFiles = useCallback(async (filesToProcess: File[]) => {
-    if (filesToProcess.length === 0) return;
-    setIsLoading(true);
-    setResults([]);
-    setError(null);
-    
-    const newResults: ExtractionResult[] = [];
-    for (let i = 0; i < filesToProcess.length; i++) {
-        setProcessingStatus(`Đang xử lý file ${i + 1} of ${filesToProcess.length}: ${filesToProcess[i].name}`);
-        const file = filesToProcess[i];
-        try {
-            const extractedData = await extractDataFromImage(file);
-             
-            if (Array.isArray(extractedData) && extractedData.length > 0) {
-                extractedData.forEach(data => {
-                    newResults.push({
-                        status: 'success',
-                        fileName: file.name,
-                        ten_hoc_sinh: data.ten_hoc_sinh,
-                        diem_so: data.diem_so
-                    });
-                });
-            } else {
-                newResults.push({
-                    status: 'error',
-                    fileName: file.name,
-                    ten_hoc_sinh: 'N/A',
-                    diem_so: 'N/A',
-                    errorMessage: 'Không trích xuất được dữ liệu.'
-                });
-            }
+            } catch (err) {
+                const errorMessage = err instanceof Error ? err.message : 'Lỗi không xác định.';
+                // Cập nhật lỗi tổng quan nếu là lỗi API Key
+                if (errorMessage.includes("API Key chưa được thiết lập")) {
+                    setError(errorMessage);
+                }
+                newResults.push({
+                    status: 'error',
+                    fileName: file.name,
+                    ten_hoc_sinh: 'N/A',
+                    diem_so: 'N/A',
+                    errorMessage: errorMessage
+                });
+            }
+        }
 
-        } catch (err) {
-            newResults.push({
-                status: 'error',
-                fileName: file.name,
-                ten_hoc_sinh: 'N/A',
-                diem_so: 'N/A',
-                errorMessage: err instanceof Error ? err.message : 'Unknown error'
-            });
-        }
-    }
+        setResults(newResults);
+        setIsLoading(false);
+        setProcessingStatus('');
+        
+        if (newResults.some(r => r.status === 'success')) {
+            downloadCSV(newResults);
+        }
+        
+    }, [downloadCSV]);
 
-    setResults(newResults);
-    setIsLoading(false);
-    setProcessingStatus('');
+    // Xử lý thay đổi tệp (TỰ ĐỘNG XỬ LÝ)
+    const handleFileChange = (e) => {
+        if (e.target.files) {
+            const newFiles = Array.from(e.target.files);
+            setFiles(newFiles);
+            setResults([]);
+            setError(null);
+            if (newFiles.length > 0) {
+                handleProcessFiles(newFiles);
+            }
+        }
+    };
     
-    if (newResults.some(r => r.status === 'success')) {
-        downloadCSV(newResults);
+    // Xử lý kéo thả (TỰ ĐỘNG XỬ LÝ)
+    const handleDrop = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragActive(false);
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+            const newFiles = Array.from(e.dataTransfer.files);
+            setFiles(newFiles);
+            setResults([]);
+            setError(null);
+            handleProcessFiles(newFiles);
+        }
+    };
+
+    // Xử lý sự kiện kéo (Drag events)
+    const handleDrag = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.type === "dragenter" || e.type === "dragover") {
+            setDragActive(true);
+        } else if (e.type === "dragleave") {
+            setDragActive(false);
+        }
+    };
+    
+    // Kích hoạt input file
+    const onButtonClick = () => {
+        fileInputRef.current?.click();
+    };
+    
+    // Nếu API key bị thiếu, hiển thị thông báo lỗi (Lỗi này sẽ xuất hiện trên Netlify nếu bạn chưa set biến môi trường)
+    if (!GEMINI_API_KEY) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+                <div className="max-w-md w-full bg-white p-6 rounded-lg shadow-lg text-center border-l-4 border-red-500">
+                    <h1 className="text-2xl font-bold text-red-600 mb-4">Lỗi Cấu hình API</h1>
+                    <p className="text-gray-700">
+                        Vui lòng thiết lập biến môi trường (Khóa API) để ứng dụng có thể hoạt động.
+                    </p>
+                    <p className="mt-4 text-sm text-gray-500">
+                        Nếu bạn đang triển khai trên Netlify/Vite, đảm bảo biến môi trường là <code className="font-mono bg-gray-200 p-1 rounded">VITE_GEMINI_API_KEY</code>.
+                    </p>
+                </div>
+            </div>
+        );
     }
-    
-  }, [downloadCSV]);
 
+    return (
+        <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8 bg-slate-50" onDragEnter={handleDrag}>
+            {/* KHỐI CHỌN MÀU QUANG PHỔ */}
+            <div className="absolute top-4 right-4 p-3 bg-white rounded-xl shadow-md flex items-center space-x-3 z-10">
+                <label htmlFor="colorPicker" className="text-sm font-semibold text-gray-700">Chọn Màu Nhấn:</label>
+                <input
+                    id="colorPicker"
+                    type="color"
+                    value={accentColor}
+                    onChange={(e) => setAccentColor(e.target.value)}
+                    className="w-10 h-10 cursor-pointer rounded-full p-0 border-2 overflow-hidden"
+                    style={{ borderColor: accentColor }}
+                />
+            </div>
 
-  // Hàm xử lý thay đổi tệp (TỰ ĐỘNG XỬ LÝ)
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const newFiles = Array.from(e.target.files);
-      setFiles(newFiles);
-      setResults([]);
-      setError(null);
-      if (newFiles.length > 0) {
-          handleProcessFiles(newFiles); 
-      }
-    }
-  };
-  
-  // Hàm xử lý kéo thả (TỰ ĐỘNG XỬ LÝ)
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const newFiles = Array.from(e.dataTransfer.files);
-      setFiles(newFiles);
-      setResults([]);
-      setError(null);
-      handleProcessFiles(newFiles); 
-    }
-  };
+            <main
+                className={`w-full max-w-4xl mx-auto bg-white p-6 sm:p-8 lg:p-10 rounded-2xl shadow-xl transition-shadow duration-300`}
+                style={{ boxShadow: `0 25px 50px -12px ${accentColor}1a, 0 0 0 1px ${accentColor}1a` }}
+                >
+                <div className="text-center">
+                    <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight" style={{ color: accentColor }}>Trích xuất điểm thi tự động (Gemini)</h1>
+                    <p className="mt-2 text-md text-slate-600">Tải ảnh các bài kiểm tra lên để trích xuất tên học sinh và điểm số. Kết quả sẽ tự động tải về file CSV.</p>
+                </div>
 
+                <div className="mt-8">
+                    <form id="form-file-upload" className="relative w-full" onDragEnter={handleDrag} onSubmit={(e) => e.preventDefault()}>
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            id="input-file-upload"
+                            multiple={true}
+                            accept="image/png, image/jpeg, image/jpg"
+                            className="hidden"
+                            onChange={handleFileChange}
+                        />
+                        {/* Hộp tải lên TỐI GIẢN và TƯƠI SÁNG (dùng màu động) */}
+                        <label id="label-file-upload" htmlFor="input-file-upload"
+                            className={`h-40 border-2 rounded-xl border-dashed flex flex-col justify-center items-center cursor-pointer transition-all duration-300 `}
+                            style={{ borderColor: dragActive ? accentColor : `${accentColor}80`, backgroundColor: dragActive ? `${accentColor}10` : '#f8fafc' }}
+                            onDragLeave={handleDrag} onDragOver={handleDrag} onDrop={handleDrop}>
+                            <UploadIcon className="w-12 h-12 mb-2" style={{ color: accentColor }} />
+                            <p className="font-semibold text-slate-600">Kéo và thả file tại đây</p>
+                            <button type="button" onClick={onButtonClick}
+                                className="mt-3 rounded-xl px-6 py-2 text-sm font-bold text-white shadow-lg transition-colors transform hover:scale-[1.03] active:scale-[0.98]"
+                                style={{ backgroundColor: accentColor, color: 'white' }}>
+                                Chọn File
+                            </button>
+                        </label>
+                    </form>
+                    
+                    {files.length > 0 && (
+                        <div className="mt-4 text-sm text-slate-600 border-l-4 p-2 rounded" style={{ borderColor: accentColor }}>
+                            <p className="font-bold mb-1" style={{ color: accentColor }}>{files.length} File đã chọn:</p>
+                            <ul className="list-disc list-inside max-h-24 overflow-y-auto pl-4">
+                                {files.map((file, i) => <li key={i} className="truncate">{file.name}</li>)}
+                            </ul>
+                        </div>
+                    )}
+                </div>
 
-  const handleDrag = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === "dragenter" || e.type === "dragover") {
-      setDragActive(true);
-    } else if (e.type === "dragleave") {
-      setDragActive(false);
-    }
-  };
-  
-  const onButtonClick = () => {
-    fileInputRef.current?.click();
-  };
-  
+                {/* Trạng thái xử lý */}
+                <div className="mt-8 flex flex-col sm:flex-row justify-center items-center gap-4">
+                    {isLoading && (
+                        <div className="flex items-center text-center p-3 rounded-lg shadow-inner" style={{ backgroundColor: `${accentColor}10` }}>
+                            <SpinnerIcon className="w-5 h-5 mr-2" style={{ color: accentColor }} />
+                            <p className="text-sm font-medium animate-pulse" style={{ color: accentColor }}>{processingStatus || 'Đang chờ xử lý...'}</p>
+                        </div>
+                    )}
+                </div>
 
-  return (
-    // Áp dụng màu nền phụ (shadow)
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8" onDragEnter={handleDrag}>
-        {/* KHỐI CHỌN MÀU QUANG PHỔ */}
-        <div className="absolute top-4 right-4 p-3 bg-white rounded-lg shadow-md flex items-center space-x-3">
-            <label htmlFor="colorPicker" className="text-sm font-semibold text-gray-700">Chọn Màu Nhấn:</label>
-            <input
-                id="colorPicker"
-                type="color"
-                value={accentColor}
-                onChange={(e) => setAccentColor(e.target.value)}
-                className="w-10 h-10 cursor-pointer rounded-full p-0 border-none overflow-hidden"
-                style={{ backgroundColor: accentColor }}
-            />
+                {/* Thông báo lỗi nếu có */}
+                {error && <p className="mt-4 text-center text-red-600 font-medium p-3 bg-red-100 rounded-lg">{error}</p>}
+                
+                {/* Nút tải về CSV (chỉ hiển thị khi có kết quả thành công) */}
+                {results.some(r => r.status === 'success') && (
+                    <div className="mt-6 flex justify-center">
+                        <button 
+                            onClick={() => downloadCSV(results)} 
+                            className="flex items-center gap-2 rounded-xl px-6 py-3 text-white font-bold shadow-lg transition-all transform hover:scale-[1.03] active:scale-[0.98]"
+                            style={{ backgroundColor: accentColor, color: 'white' }}
+                        >
+                            <CsvIcon className="w-5 h-5" />
+                            Tải về CSV ({results.filter(r => r.status === 'success').length} kết quả)
+                        </button>
+                    </div>
+                )}
+                
+                <ResultsTable results={results} />
+            </main>
+            <footer className="w-full max-w-4xl mx-auto text-center mt-6">
+                <p className="text-sm text-slate-500">Powered by Google Gemini</p>
+            </footer>
         </div>
-
-      <main 
-        className={`w-full max-w-4xl mx-auto bg-white p-6 sm:p-8 lg:p-10 rounded-2xl shadow-xl shadow-amber-100 transition-shadow duration-300`} 
-        style={{ boxShadow: `0 25px 50px -12px rgba(255, 255, 255, 0.4), 0 0 0 1px ${accentColor}1a` }}
-        > 
-        <div className="text-center">
-            {/* Sửa tiêu đề dùng màu Hex */}
-            <h1 className="text-3xl sm:text-4xl font-bold" style={{ color: accentColor }}>Trích xuất điểm thi tự động</h1>
-            <p className="mt-2 text-md text-slate-600">Tải ảnh các bài kiểm tra lên để trích xuất tên học sinh và điểm số.</p>
-        </div>
-
-        <div className="mt-8">
-          <form id="form-file-upload" className="relative w-full" onDragEnter={handleDrag} onSubmit={(e) => e.preventDefault()}>
-            <input ref={fileInputRef} type="file" id="input-file-upload" multiple={true} accept="image/png, image/jpeg, image/jpg" className="hidden" onChange={handleFileChange} />
-            {/* Hộp tải lên TỐI GIẢN và TƯƠI SÁNG (dùng màu động) */}
-            <label id="label-file-upload" htmlFor="input-file-upload" 
-                className={`h-40 border-2 rounded-lg flex flex-col justify-center items-center cursor-pointer transition-all duration-300 `} 
-                style={{ borderColor: accentColor, backgroundColor: dragActive ? `${accentColor}1a` : '#f8fafc' }}
-                onDragLeave={handleDrag} onDragOver={handleDrag} onDrop={handleDrop}>
-                <UploadIcon className="w-12 h-12 mb-2" style={{ color: accentColor }} />
-                <p className="font-semibold" style={{ color: accentColor }}>Kéo và thả file tại đây</p>
-                <button type="button" onClick={onButtonClick} 
-                    className="mt-2 rounded-lg bg-white px-4 py-2 text-sm font-bold text-white shadow-md transition-colors"
-                    style={{ backgroundColor: accentColor, color: 'white' }}>
-                    Chọn File
-                </button>
-            </label>
-          </form>
-          {files.length > 0 && (
-            <div className="mt-4 text-sm text-slate-600">
-              <p className="font-semibold">Selected Files (Tự động xử lý):</p>
-              <ul className="list-disc list-inside max-h-32 overflow-y-auto mt-1">
-                {files.map((file, i) => <li key={i} className="truncate">{file.name}</li>)}
-              </ul>
-            </div>
-          )}
-        </div>
-
-        {/* Xóa nút Xử lý chính vì đã tự động hóa */}
-        <div className="mt-8 flex flex-col sm:flex-row justify-center items-center gap-4">
-            {/* Sử dụng màu động cho trạng thái xử lý */}
-            {isLoading && <p className="mt-4 text-center text-sm animate-pulse" style={{ color: accentColor }}>{processingStatus || 'Đang chờ xử lý...'}</p>}
-        </div>
-
-        {error && <p className="mt-4 text-center text-red-500">{error}</p>}
-        
-        <ResultsTable results={results} />
-      </main>
-      <footer className="w-full max-w-4xl mx-auto text-center mt-6">
-        <p className="text-sm text-slate-500">Powered by Google Gemini</p>
-      </footer>
-    </div>
-  );
+    );
 }
-      set
