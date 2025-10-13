@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 
 // =======================================================
 // 1. TYPES & API SERVICE
@@ -21,29 +21,7 @@ import React, { useState, useCallback, useRef } from 'react';
  * @property {string} [errorMessage]
  */
 
-// HÀM KIỂM TRA MÔI TRƯỜNG ĐỂ LẤY KHÓA API
-// Sử dụng hàm gọi tức thì an toàn (IIFE) để xử lý lỗi biên dịch cục bộ và vẫn truy cập đúng biến Netlify/Vite
-const getApiKey = (() => {
-    // 1. Kiểm tra biến an toàn của môi trường code editor (nếu tồn tại)
-    if (typeof __api_key !== 'undefined') {
-        return __api_key;
-    }
-    
-    // 2. Thử kiểm tra biến môi trường VITE/Netlify
-    try {
-        if (typeof import.meta !== 'undefined' && import.meta.env) {
-            return import.meta.env.VITE_GEMINI_API_KEY || "";
-        }
-    } catch (e) {
-        // Bỏ qua lỗi ReferenceError nếu import.meta không được định nghĩa
-    }
-
-    // 3. Trả về rỗng nếu không tìm thấy
-    return "";
-})();
-
-
-const GEMINI_API_KEY = getApiKey();
+// KHAI BÁO CÁC HẰNG SỐ CỦA DỊCH VỤ
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
 
 /**
@@ -58,94 +36,6 @@ const fileToGenerativePart = async (file) => {
     return {
         inlineData: { data: await base64EncodedDataPromise, mimeType: file.type },
     };
-};
-
-/**
- * Hàm gọi API Gemini để trích xuất dữ liệu
- * @param {File} imageFile 
- * @returns {Promise<StudentScore[]>}
- */
-const extractDataFromImage = async (imageFile) => {
-    // Kiểm tra khóa API để đưa ra thông báo lỗi rõ ràng hơn
-    if (!GEMINI_API_KEY) {
-        throw new Error("API Key chưa được thiết lập. Vui lòng kiểm tra biến môi trường.");
-    }
-
-    const model = 'gemini-2.5-flash-preview-05-20';
-    const imagePart = await fileToGenerativePart(imageFile);
-    
-    // Prompt yêu cầu trích xuất tên và điểm
-    const prompt = `Bạn là một CHUYÊN GIA PHÂN TÍCH BÀI KIỂM TRA. Từ hình ảnh danh sách điểm, hãy trích xuất **TẤT CẢ** các cặp Tên học sinh và Tổng điểm mà bạn tìm thấy. 
-YÊU CẦU: 1. Trích xuất tất cả học sinh. 2. Tên phải giữ nguyên Tiếng Việt có dấu. 3. Điểm số phải là giá trị số. Trả về MẢNG JSON.`;
-
-    const responseSchema = {
-        type: "ARRAY",
-        items: {
-            type: "OBJECT",
-            properties: {
-                ten_hoc_sinh: { type: "STRING", description: "Họ tên đầy đủ của học sinh." },
-                diem_so: { type: "STRING", description: "Điểm số cuối cùng (ví dụ: 8.5, 10.0)." }
-            },
-            required: ['ten_hoc_sinh', 'diem_so'],
-        },
-    };
-
-    const payload = {
-        contents: [{ parts: [imagePart, { text: prompt }] }],
-        generationConfig: {
-            responseMimeType: "application/json",
-            responseSchema: responseSchema,
-        },
-    };
-
-    // Áp dụng tính năng Retry (Backoff) để xử lý lỗi mạng/throttling
-    const MAX_RETRIES = 3;
-    let lastError = null;
-
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        try {
-            const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            if (response.ok) {
-                const result = await response.json();
-                const jsonText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-                if (!jsonText) {
-                    throw new Error("Không nhận được nội dung phản hồi từ API.");
-                }
-            
-                const parsedData = JSON.parse(jsonText);
-                if (!Array.isArray(parsedData)) {
-                    throw new Error("Đầu ra JSON không phải là Mảng hợp lệ.");
-                }
-                return parsedData;
-
-            } else if (response.status === 429 || response.status >= 500) {
-                // Throttling hoặc Server Error: thử lại
-                lastError = new Error(`API call failed with status ${response.status}. Retrying...`);
-                await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000)); // Exponential Backoff
-                continue;
-            } else {
-                // Các lỗi khác (400, 401, 403): không thử lại
-                throw new Error(`API call failed with status ${response.status}: ${response.statusText}`);
-            }
-
-        } catch (e) {
-            if (e.message.includes('Retrying')) {
-                lastError = e;
-                continue;
-            }
-            throw new Error(`Lỗi mạng hoặc cú pháp: ${e.message}`);
-        }
-    }
-
-    if (lastError) {
-        throw new Error(`API đã thất bại sau ${MAX_RETRIES} lần thử. ${lastError.message}`);
-    }
 };
 
 // =======================================================
@@ -241,6 +131,114 @@ export default function App() {
     const [accentColor, setAccentColor] = useState('#4f46e5'); // Indigo đậm mặc định (Deep Blue Theme)
     const fileInputRef = useRef(null);
 
+    // NEW STATE: Lưu trữ API Key ở Runtime
+    const [apiKey, setApiKey] = useState(null);
+
+    // Sử dụng useEffect để khởi tạo API Key an toàn sau khi component đã render
+    useEffect(() => {
+        let key = null;
+        try {
+            // Cú pháp Netlify/Vite (Chỉ chạy sau khi build)
+            if (typeof import.meta !== 'undefined' && import.meta.env) {
+                key = import.meta.env.VITE_GEMINI_API_KEY || "";
+            }
+        } catch (e) {
+            // Lỗi ReferenceError/TypeError do import.meta không được định nghĩa
+            // Bỏ qua, key vẫn là null/""
+        }
+        
+        // Kiểm tra biến an toàn của code editor (nếu tồn tại)
+        if (typeof __api_key !== 'undefined') {
+            key = __api_key;
+        }
+
+        setApiKey(key);
+        // Nếu key bị thiếu, đặt lỗi để hiển thị thông báo thay vì crash
+        if (!key) {
+            setError("API Key chưa được thiết lập. Vui lòng kiểm tra biến môi trường VITE_GEMINI_API_KEY trên Netlify.");
+        }
+    }, []);
+
+    // Hàm gọi API Gemini (Đã chuyển vào đây để sử dụng API Key trong state)
+    const extractDataFromImage = useCallback(async (imageFile) => {
+        if (!apiKey) {
+            throw new Error("API Key chưa được thiết lập.");
+        }
+        
+        const model = 'gemini-2.5-flash-preview-05-20';
+        const imagePart = await fileToGenerativePart(imageFile);
+        
+        const prompt = `Bạn là một CHUYÊN GIA PHÂN TÍCH BÀI KIỂM TRA. Từ hình ảnh danh sách điểm, hãy trích xuất **TẤT CẢ** các cặp Tên học sinh và Tổng điểm mà bạn tìm thấy. 
+YÊU CẦU: 1. Trích xuất tất cả học sinh. 2. Tên phải giữ nguyên Tiếng Việt có dấu. 3. Điểm số phải là giá trị số. Trả về MẢNG JSON.`;
+
+        const responseSchema = {
+            type: "ARRAY",
+            items: {
+                type: "OBJECT",
+                properties: {
+                    ten_hoc_sinh: { type: "STRING", description: "Họ tên đầy đủ của học sinh." },
+                    diem_so: { type: "STRING", description: "Điểm số cuối cùng (ví dụ: 8.5, 10.0)." }
+                },
+                required: ['ten_hoc_sinh', 'diem_so'],
+            },
+        };
+
+        const payload = {
+            contents: [{ parts: [imagePart, { text: prompt }] }],
+            generationConfig: {
+                responseMimeType: "application/json",
+                responseSchema: responseSchema,
+            },
+        };
+
+        const MAX_RETRIES = 3;
+        let lastError = null;
+
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            try {
+                const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    const jsonText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                    if (!jsonText) {
+                        throw new Error("Không nhận được nội dung phản hồi từ API.");
+                    }
+                
+                    const parsedData = JSON.parse(jsonText);
+                    if (!Array.isArray(parsedData)) {
+                        throw new Error("Đầu ra JSON không phải là Mảng hợp lệ.");
+                    }
+                    return parsedData;
+
+                } else if (response.status === 429 || response.status >= 500) {
+                    lastError = new Error(`API call failed with status ${response.status}. Retrying...`);
+                    await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+                    continue;
+                } else {
+                    throw new Error(`API call failed with status ${response.status}: ${response.statusText}`);
+                }
+
+            } catch (e) {
+                if (e.message.includes('Retrying')) {
+                    lastError = e;
+                    continue;
+                }
+                throw new Error(`Lỗi mạng hoặc cú pháp: ${e.message}`);
+            }
+        }
+
+        if (lastError) {
+            throw new Error(`API đã thất bại sau ${MAX_RETRIES} lần thử. ${lastError.message}`);
+        }
+    }, [apiKey]);
+
+
     // Hàm tải về CSV
     const downloadCSV = useCallback((finalResults) => {
         const successfulResults = finalResults.filter(r => r.status === 'success');
@@ -327,7 +325,7 @@ export default function App() {
             downloadCSV(newResults);
         }
         
-    }, [downloadCSV]);
+    }, [downloadCSV, extractDataFromImage]); // Thêm extractDataFromImage vào dependencies
 
     // Xử lý thay đổi tệp (TỰ ĐỘNG XỬ LÝ)
     const handleFileChange = (e) => {
@@ -373,7 +371,20 @@ export default function App() {
     };
     
     // Nếu API key bị thiếu, hiển thị thông báo lỗi (Lỗi này sẽ xuất hiện trên Netlify nếu bạn chưa set biến môi trường)
-    if (!GEMINI_API_KEY) {
+    // Sẽ hiển thị lỗi này cho đến khi useEffect hoàn thành và key được thiết lập
+    if (apiKey === null || (apiKey === "" && !error)) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gray-900 p-4">
+                <div className="max-w-md w-full bg-gray-800 p-6 rounded-xl shadow-2xl text-center border-l-4 border-indigo-500">
+                    <SpinnerIcon className="w-8 h-8 mx-auto mb-4" style={{ color: accentColor }} />
+                    <h1 className="text-2xl font-bold text-gray-100">Đang khởi tạo ứng dụng...</h1>
+                    <p className="mt-2 text-gray-400">Vui lòng đợi trong giây lát.</p>
+                </div>
+            </div>
+        );
+    }
+    
+    if (!apiKey) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-900 p-4">
                 <div className="max-w-md w-full bg-gray-800 p-6 rounded-xl shadow-2xl text-center border-l-4 border-red-500">
