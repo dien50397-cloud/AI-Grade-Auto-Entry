@@ -149,37 +149,142 @@ const CsvIcon = (props) => (
 
 
 // =======================================================
-// 3. RESULTS TABLE COMPONENT
+// 3. PERFORMANCE SUMMARY COMPONENT
+// =======================================================
+
+/**
+ * Component hiển thị tóm tắt hiệu suất
+ * @param {{results: ExtractionResult[], accentColor: string}} props
+ */
+const PerformanceSummary = ({ results, accentColor }) => {
+    const successfulResults = results.filter(r => r.status === 'success');
+    if (successfulResults.length === 0) return null;
+
+    let totalScore = 0;
+    let countGioi = 0; // >= 8.0
+    let countKha = 0;  // >= 6.5
+    let countTB = 0;   // >= 5.0
+    let countYeu = 0;  // < 5.0
+
+    successfulResults.forEach(r => {
+        const score = parseFloat(r.diem_so);
+        if (!isNaN(score)) {
+            totalScore += score;
+            if (score >= 8.0) countGioi++;
+            else if (score >= 6.5) countKha++;
+            else if (score >= 5.0) countTB++;
+            else countYeu++;
+        }
+    });
+
+    const totalStudents = successfulResults.length;
+    const avgScore = totalStudents > 0 ? (totalScore / totalStudents).toFixed(2) : 'N/A';
+    const percentPass = totalStudents > 0 ? (((countGioi + countKha + countTB) / totalStudents) * 100).toFixed(1) : '0';
+
+    const categories = [
+        { label: 'Xuất Sắc/Giỏi ({'>'}= 8.0)', value: countGioi, color: 'text-green-400', bgColor: 'bg-green-900/40' },
+        { label: 'Khá ({'>'}= 6.5)', value: countKha, color: 'text-blue-400', bgColor: 'bg-blue-900/40' },
+        { label: 'Trung Bình ({'>'}= 5.0)', value: countTB, color: 'text-yellow-400', bgColor: 'bg-yellow-900/40' },
+        { label: 'Yếu ({'<'} 5.0)', value: countYeu, color: 'text-red-400', bgColor: 'bg-red-900/40' }
+    ];
+
+    return (
+        <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Cột 1: Chỉ số Chính */}
+            <div className="md:col-span-1 p-6 rounded-xl border border-gray-700 shadow-lg" style={{ borderColor: accentColor }}>
+                <h3 className="text-lg font-bold text-gray-100 mb-4" style={{ color: accentColor }}>Tóm Tắt Hiệu Suất</h3>
+                <div className="space-y-3">
+                    <div className="flex justify-between items-center text-gray-300">
+                        <span className="font-medium">Tổng số học sinh</span>
+                        <span className="text-xl font-extrabold" style={{ color: accentColor }}>{totalStudents}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-gray-300 border-t border-gray-700 pt-3">
+                        <span className="font-medium">Điểm trung bình lớp</span>
+                        <span className="text-2xl font-extrabold text-white">{avgScore}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-gray-300 border-t border-gray-700 pt-3">
+                        <span className="font-medium">Tỷ lệ Đỗ ({'>'}= 5.0)</span>
+                        <span className="text-xl font-extrabold text-green-400">{percentPass}%</span>
+                    </div>
+                </div>
+            </div>
+
+            {/* Cột 2 & 3: Phân loại Điểm */}
+            <div className="md:col-span-2 grid grid-cols-2 gap-4">
+                {categories.map(cat => (
+                    <div key={cat.label} className={`p-4 rounded-xl shadow-md ${cat.bgColor}`}>
+                        <p className={`text-sm font-semibold ${cat.color}`}>{cat.label}</p>
+                        <p className="text-2xl font-extrabold text-gray-100 mt-1">{cat.value}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{totalStudents > 0 ? ((cat.value / totalStudents) * 100).toFixed(1) : 0}% tổng số</p>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+// =======================================================
+// 4. RESULTS TABLE COMPONENT
 // =======================================================
 
 /**
  * Component hiển thị kết quả trích xuất
- * @param {{results: ExtractionResult[]}} props
+ * @param {{results: ExtractionResult[], onSort: function(string): void, sortConfig: {key: string, direction: string}, filterStatus: string}} props
  */
-const ResultsTable = ({ results }) => {
+const ResultsTable = ({ results, onSort, sortConfig, filterStatus }) => {
     if (results.length === 0) return null;
 
-    const successfulCount = results.filter(r => r.status === 'success').length;
-    const errorCount = results.filter(r => r.status === 'error').length;
+    // Logic Lọc theo trạng thái
+    const filteredResults = results.filter(result => {
+        if (filterStatus === 'all') return true;
+        
+        const score = parseFloat(result.diem_so);
+        const passed = !isNaN(score) && score >= 5.0;
+
+        if (filterStatus === 'pass') return result.status === 'success' && passed;
+        if (filterStatus === 'fail') return result.status === 'success' && !passed;
+
+        // Nếu là lỗi trích xuất, luôn hiển thị trong chế độ 'all'
+        return result.status === 'error';
+    });
+
+
+    const successfulCount = filteredResults.filter(r => r.status === 'success').length;
+    const errorCount = filteredResults.filter(r => r.status === 'error').length;
+
+    const getSortIndicator = (key) => {
+        if (sortConfig.key !== key) return null;
+        return sortConfig.direction === 'ascending' ? ' ▲' : ' ▼';
+    };
 
     return (
         <div className="mt-10 overflow-x-auto shadow-lg rounded-xl">
             <h2 className="text-xl font-bold p-4 bg-gray-700 text-gray-100 rounded-t-xl">
-                Kết quả Trích xuất ({successfulCount} thành công, {errorCount} lỗi)
+                Chi Tiết Kết Quả ({successfulCount} thành công, {errorCount} lỗi)
             </h2>
             <table className="min-w-full divide-y divide-gray-600">
                 <thead className="bg-gray-600">
                     <tr>
                         {/* Cột 1: Trạng thái (Fixed width) */}
                         <th className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider w-auto">Trạng thái</th>
-                        {/* Cột 2: Tên Học sinh (Takes remaining space) */}
-                        <th className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider w-full">Tên Học sinh</th>
-                        {/* Cột 3: Điểm số (Fixed small width) */}
-                        <th className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider w-20">Điểm số</th>
+                        {/* Cột 2: Tên Học sinh (Takes remaining space) - Sắp xếp theo Tên */}
+                        <th 
+                            className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider w-full cursor-pointer hover:text-white transition-colors"
+                            onClick={() => onSort('ten_hoc_sinh')}
+                        >
+                            Tên Học sinh {getSortIndicator('ten_hoc_sinh')}
+                        </th>
+                        {/* Cột 3: Điểm số (Fixed small width) - Sắp xếp theo Điểm */}
+                        <th 
+                            className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider w-20 cursor-pointer hover:text-white transition-colors"
+                            onClick={() => onSort('diem_so')}
+                        >
+                            Điểm số {getSortIndicator('diem_so')}
+                        </th>
                     </tr>
                 </thead>
                 <tbody className="bg-gray-800 divide-y divide-gray-700">
-                    {results.map((result, index) => (
+                    {filteredResults.map((result, index) => (
                         <tr key={index} className={result.status === 'error' ? 'bg-red-900/20 hover:bg-red-900/40 transition-colors' : 'hover:bg-indigo-900/20 transition-colors'}>
                             {/* Ô Trạng thái */}
                             <td className="px-4 py-3 align-top w-auto">
@@ -203,13 +308,18 @@ const ResultsTable = ({ results }) => {
                     ))}
                 </tbody>
             </table>
+            {filteredResults.length === 0 && (
+                <div className="p-6 text-center text-gray-500 bg-gray-800 rounded-b-xl">
+                    Không tìm thấy kết quả phù hợp với bộ lọc hiện tại.
+                </div>
+            )}
         </div>
     );
 };
 
 
 // =======================================================
-// 4. MAIN APP COMPONENT
+// 5. MAIN APP COMPONENT
 // =======================================================
 
 export default function App() {
@@ -223,6 +333,51 @@ export default function App() {
     const [processingStatus, setProcessingStatus] = useState('');
     const [accentColor, setAccentColor] = useState('#4f46e5'); // Indigo đậm mặc định (Deep Blue Theme)
     const fileInputRef = useRef(null);
+    
+    // Sắp xếp và Lọc
+    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'ascending' });
+    const [filterStatus, setFilterStatus] = useState('all'); // 'all', 'pass', 'fail'
+
+    const sortedResults = React.useMemo(() => {
+        let sortableItems = [...results];
+        // Đảm bảo chỉ sắp xếp các kết quả thành công dựa trên điểm số (number), các kết quả lỗi luôn ở cuối
+        sortableItems.sort((a, b) => {
+            const isAError = a.status !== 'success';
+            const isBError = b.status !== 'success';
+
+            if (isAError && !isBError) return 1;
+            if (!isAError && isBError) return -1;
+            if (isAError && isBError) return 0; // Giữ nguyên thứ tự giữa các lỗi
+
+            if (sortConfig.key !== null) {
+                let aValue = a[sortConfig.key];
+                let bValue = b[sortConfig.key];
+
+                if (sortConfig.key === 'diem_so') {
+                    aValue = parseFloat(aValue) || -1;
+                    bValue = parseFloat(bValue) || -1;
+                }
+                
+                if (aValue < bValue) {
+                    return sortConfig.direction === 'ascending' ? -1 : 1;
+                }
+                if (aValue > bValue) {
+                    return sortConfig.direction === 'ascending' ? 1 : -1;
+                }
+            }
+            return 0;
+        });
+        return sortableItems;
+    }, [results, sortConfig]);
+
+    const handleSort = (key) => {
+        let direction = 'ascending';
+        if (sortConfig.key === key && sortConfig.direction === 'ascending') {
+            direction = 'descending';
+        }
+        setSortConfig({ key, direction });
+    };
+
 
     // NEW STATE: Lưu trữ API Key ở Runtime (Khởi tạo là null)
     const [apiKey, setApiKey] = useState(null);
@@ -246,7 +401,11 @@ export default function App() {
         }
 
         setApiKey(key);
-    }, []);
+        
+        if (!key && !error) {
+             setError("API Key chưa được thiết lập. Vui lòng kiểm tra biến môi trường VITE_GEMINI_API_KEY trên Netlify.");
+        }
+    }, [error]);
 
     // Hàm gọi API Gemini (Sử dụng useCallback để đảm bảo hiệu suất)
     const extractDataFromImageCallback = useCallback(async (imageFile) => {
@@ -291,6 +450,7 @@ export default function App() {
         setIsLoading(true);
         setResults([]);
         setError(null);
+        setSortConfig({ key: null, direction: 'ascending' }); // Reset sắp xếp khi tải file mới
         
         /** @type {ExtractionResult[]} */
         const newResults = [];
@@ -482,6 +642,29 @@ export default function App() {
                     )}
                 </div>
 
+                {/* Phân tích hiệu suất */}
+                <PerformanceSummary results={sortedResults} accentColor={accentColor} />
+                
+                {/* Thanh Lọc */}
+                <div className="mt-4 flex flex-wrap gap-3 items-center justify-start text-sm">
+                    <span className="text-gray-400 font-semibold">Lọc kết quả:</span>
+                    {['all', 'pass', 'fail'].map(status => (
+                        <button
+                            key={status}
+                            onClick={() => setFilterStatus(status)}
+                            className={`px-4 py-1.5 rounded-full font-medium transition-all ${
+                                filterStatus === status 
+                                ? 'shadow-md text-white' 
+                                : 'text-gray-400 border border-gray-600 hover:bg-gray-700'
+                            }`}
+                            style={filterStatus === status ? { backgroundColor: accentColor } : {}}
+                        >
+                            {status === 'all' ? 'Tất cả' : status === 'pass' ? 'Đỗ ({'>'}= 5.0)' : 'Trượt ({'<'} 5.0)'}
+                        </button>
+                    ))}
+                </div>
+
+
                 {/* Trạng thái xử lý */}
                 <div className="mt-8 flex flex-col sm:flex-row justify-center items-center gap-4">
                     {isLoading && (
@@ -509,7 +692,7 @@ export default function App() {
                     </div>
                 )}
                 
-                <ResultsTable results={results} />
+                <ResultsTable results={sortedResults} onSort={handleSort} sortConfig={sortConfig} filterStatus={filterStatus} />
             </main>
             <footer className="w-full max-w-4xl mx-auto text-center mt-6">
                 <p className="text-sm text-gray-500">Powered by Google Gemini</p>
