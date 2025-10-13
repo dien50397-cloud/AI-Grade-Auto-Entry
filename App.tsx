@@ -170,21 +170,26 @@ const ResultsTable = ({ results }) => {
             <table className="min-w-full divide-y divide-gray-600">
                 <thead className="bg-gray-600">
                     <tr>
-                        <th className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">Trạng thái</th>
-                        <th className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">Tên Học sinh</th>
-                        <th className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">Điểm số</th>
+                        {/* Cột 1: Trạng thái (Fixed width) */}
+                        <th className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider w-auto">Trạng thái</th>
+                        {/* Cột 2: Tên Học sinh (Takes remaining space) */}
+                        <th className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider w-full">Tên Học sinh</th>
+                        {/* Cột 3: Điểm số (Fixed small width) */}
+                        <th className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider w-20">Điểm số</th>
                     </tr>
                 </thead>
                 <tbody className="bg-gray-800 divide-y divide-gray-700">
                     {results.map((result, index) => (
                         <tr key={index} className={result.status === 'error' ? 'bg-red-900/20 hover:bg-red-900/40 transition-colors' : 'hover:bg-indigo-900/20 transition-colors'}>
-                            <td className="px-4 py-3 whitespace-nowrap">
+                            <td className="px-4 py-3 whitespace-nowrap w-auto">
                                 <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${result.status === 'success' ? 'bg-green-700 text-green-100' : 'bg-red-700 text-red-100'}`}>
                                     {result.status === 'success' ? 'Thành công' : 'Lỗi'}
                                 </span>
                             </td>
-                            <td className="px-4 py-3 text-sm text-gray-300 font-medium">{result.ten_hoc_sinh}</td>
-                            <td className="px-4 py-3 text-sm font-bold text-gray-100">
+                            {/* Cột Tên Học sinh: Cho phép wrap text và chiếm không gian */}
+                            <td className="px-4 py-3 text-sm text-gray-300 font-medium w-full break-words">{result.ten_hoc_sinh}</td>
+                            {/* Cột Điểm số: Giữ cố định */}
+                            <td className="px-4 py-3 text-sm font-bold text-gray-100 whitespace-nowrap w-20 text-right">
                                 {result.status === 'success' ? result.diem_so : (
                                     <span className="text-red-400 italic text-xs" title={result.errorMessage}>
                                         {result.errorMessage || 'Lỗi chung'}
@@ -250,7 +255,7 @@ export default function App() {
     }, [apiKey]);
 
 
-    // Hàm tải về CSV (ĐÃ SỬA LỖI ĐỊNH DẠNG CSV VĨNH VIỄN)
+    // Hàm tải về CSV (ĐÃ SỬA LỖI DẤU CHẤM PHẨY)
     const downloadCSV = useCallback((finalResults) => {
         const successfulResults = finalResults.filter(r => r.status === 'success');
         if (successfulResults.length === 0) return;
