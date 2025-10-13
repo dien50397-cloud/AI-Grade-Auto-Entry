@@ -21,7 +21,30 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
  * @property {string} [errorMessage]
  */
 
+// HÀM KIỂM TRA MÔI TRƯỜNG ĐỂ LẤY KHÓA API
+// Sử dụng hàm gọi tức thì an toàn (IIFE) để xử lý lỗi biên dịch cục bộ và vẫn truy cập đúng biến Netlify/Vite
+const getApiKey = (() => {
+    // 1. Kiểm tra biến an toàn của môi trường code editor (nếu tồn tại)
+    if (typeof __api_key !== 'undefined') {
+        return __api_key;
+    }
+    
+    // 2. Thử kiểm tra biến môi trường VITE/Netlify
+    try {
+        if (typeof import.meta !== 'undefined' && import.meta.env) {
+            return import.meta.env.VITE_GEMINI_API_KEY || "";
+        }
+    } catch (e) {
+        // Bỏ qua lỗi ReferenceError nếu import.meta không được định nghĩa
+    }
+
+    // 3. Trả về rỗng nếu không tìm thấy
+    return "";
+})();
+
+
 // KHAI BÁO CÁC HẰNG SỐ CỦA DỊCH VỤ
+const GEMINI_API_KEY = getApiKey();
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
 
 /**
@@ -36,6 +59,94 @@ const fileToGenerativePart = async (file) => {
     return {
         inlineData: { data: await base64EncodedDataPromise, mimeType: file.type },
     };
+};
+
+/**
+ * Hàm gọi API Gemini để trích xuất dữ liệu
+ * @param {File} imageFile 
+ * @returns {Promise<StudentScore[]>}
+ */
+const extractDataFromImage = async (imageFile, apiKey) => {
+    // Kiểm tra khóa API để đưa ra thông báo lỗi rõ ràng hơn
+    if (!apiKey) {
+        throw new Error("API Key chưa được thiết lập.");
+    }
+
+    const model = 'gemini-2.5-flash-preview-05-20';
+    const imagePart = await fileToGenerativePart(imageFile);
+    
+    // Prompt yêu cầu trích xuất tên và điểm
+    const prompt = `Bạn là một CHUYÊN GIA PHÂN TÍCH BÀI KIỂM TRA. Từ hình ảnh danh sách điểm, hãy trích xuất **TẤT CẢ** các cặp Tên học sinh và Tổng điểm mà bạn tìm thấy. 
+YÊU CẦU: 1. Trích xuất tất cả học sinh. 2. Tên phải giữ nguyên Tiếng Việt có dấu. 3. Điểm số phải là giá trị số. Trả về MẢNG JSON.`;
+
+    const responseSchema = {
+        type: "ARRAY",
+        items: {
+            type: "OBJECT",
+            properties: {
+                ten_hoc_sinh: { type: "STRING", description: "Họ tên đầy đủ của học sinh." },
+                diem_so: { type: "STRING", description: "Điểm số cuối cùng (ví dụ: 8.5, 10.0)." }
+            },
+            required: ['ten_hoc_sinh', 'diem_so'],
+        },
+    };
+
+    const payload = {
+        contents: [{ parts: [imagePart, { text: prompt }] }],
+        generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: responseSchema,
+        },
+    };
+
+    // Áp dụng tính năng Retry (Backoff) để xử lý lỗi mạng/throttling
+    const MAX_RETRIES = 3;
+    let lastError = null;
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        try {
+            const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                const jsonText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                if (!jsonText) {
+                    throw new Error("Không nhận được nội dung phản hồi từ API.");
+                }
+            
+                const parsedData = JSON.parse(jsonText);
+                if (!Array.isArray(parsedData)) {
+                    throw new Error("Đầu ra JSON không phải là Mảng hợp lệ.");
+                }
+                return parsedData;
+
+            } else if (response.status === 429 || response.status >= 500) {
+                // Throttling hoặc Server Error: thử lại
+                lastError = new Error(`API call failed with status ${response.status}. Retrying...`);
+                await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000)); // Exponential Backoff
+                continue;
+            } else {
+                // Các lỗi khác (400, 401, 403): không thử lại
+                throw new Error(`API call failed with status ${response.status}: ${response.statusText}`);
+            }
+
+        } catch (e) {
+            if (e.message.includes('Retrying')) {
+                lastError = e;
+                continue;
+            }
+            throw new Error(`Lỗi mạng hoặc cú pháp: ${e.message}`);
+        }
+    }
+
+    if (lastError) {
+        throw new Error(`API đã thất bại sau ${MAX_RETRIES} lần thử. ${lastError.message}`);
+    }
 };
 
 // =======================================================
@@ -84,7 +195,7 @@ const ResultsTable = ({ results }) => {
                 <thead className="bg-gray-600">
                     <tr>
                         <th className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">Trạng thái</th>
-                        <th className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">Tên File</th>
+                        {/* Đã loại bỏ: Tên File */}
                         <th className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">Tên Học sinh</th>
                         <th className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">Điểm số</th>
                     </tr>
@@ -97,7 +208,7 @@ const ResultsTable = ({ results }) => {
                                     {result.status === 'success' ? 'Thành công' : 'Lỗi'}
                                 </span>
                             </td>
-                            <td className="px-4 py-3 text-sm text-gray-100 truncate max-w-[150px]">{result.fileName}</td>
+                            {/* Đã loại bỏ: Tên File */}
                             <td className="px-4 py-3 text-sm text-gray-300 font-medium">{result.ten_hoc_sinh}</td>
                             <td className="px-4 py-3 text-sm font-bold text-gray-100">
                                 {result.status === 'success' ? result.diem_so : (
@@ -160,82 +271,9 @@ export default function App() {
     }, []);
 
     // Hàm gọi API Gemini (Đã chuyển vào đây để sử dụng API Key trong state)
-    const extractDataFromImage = useCallback(async (imageFile) => {
-        if (!apiKey) {
-            throw new Error("API Key chưa được thiết lập.");
-        }
-        
-        const model = 'gemini-2.5-flash-preview-05-20';
-        const imagePart = await fileToGenerativePart(imageFile);
-        
-        const prompt = `Bạn là một CHUYÊN GIA PHÂN TÍCH BÀI KIỂM TRA. Từ hình ảnh danh sách điểm, hãy trích xuất **TẤT CẢ** các cặp Tên học sinh và Tổng điểm mà bạn tìm thấy. 
-YÊU CẦU: 1. Trích xuất tất cả học sinh. 2. Tên phải giữ nguyên Tiếng Việt có dấu. 3. Điểm số phải là giá trị số. Trả về MẢNG JSON.`;
-
-        const responseSchema = {
-            type: "ARRAY",
-            items: {
-                type: "OBJECT",
-                properties: {
-                    ten_hoc_sinh: { type: "STRING", description: "Họ tên đầy đủ của học sinh." },
-                    diem_so: { type: "STRING", description: "Điểm số cuối cùng (ví dụ: 8.5, 10.0)." }
-                },
-                required: ['ten_hoc_sinh', 'diem_so'],
-            },
-        };
-
-        const payload = {
-            contents: [{ parts: [imagePart, { text: prompt }] }],
-            generationConfig: {
-                responseMimeType: "application/json",
-                responseSchema: responseSchema,
-            },
-        };
-
-        const MAX_RETRIES = 3;
-        let lastError = null;
-
-        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-            try {
-                const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                if (response.ok) {
-                    const result = await response.json();
-                    const jsonText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-                    if (!jsonText) {
-                        throw new Error("Không nhận được nội dung phản hồi từ API.");
-                    }
-                
-                    const parsedData = JSON.parse(jsonText);
-                    if (!Array.isArray(parsedData)) {
-                        throw new Error("Đầu ra JSON không phải là Mảng hợp lệ.");
-                    }
-                    return parsedData;
-
-                } else if (response.status === 429 || response.status >= 500) {
-                    lastError = new Error(`API call failed with status ${response.status}. Retrying...`);
-                    await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
-                    continue;
-                } else {
-                    throw new Error(`API call failed with status ${response.status}: ${response.statusText}`);
-                }
-
-            } catch (e) {
-                if (e.message.includes('Retrying')) {
-                    lastError = e;
-                    continue;
-                }
-                throw new Error(`Lỗi mạng hoặc cú pháp: ${e.message}`);
-            }
-        }
-
-        if (lastError) {
-            throw new Error(`API đã thất bại sau ${MAX_RETRIES} lần thử. ${lastError.message}`);
-        }
+    const extractDataFromImageCallback = useCallback(async (imageFile) => {
+        // Gọi hàm service extractDataFromImage với apiKey từ state
+        return extractDataFromImage(imageFile, apiKey);
     }, [apiKey]);
 
 
@@ -244,9 +282,10 @@ YÊU CẦU: 1. Trích xuất tất cả học sinh. 2. Tên phải giữ nguyên
         const successfulResults = finalResults.filter(r => r.status === 'success');
         if (successfulResults.length === 0) return;
 
-        const headers = ['"Tên học sinh"', '"Điểm số"', '"Tên file"'].join('\t');
+        // CHỈ BAO GỒM: Tên học sinh và Điểm số
+        const headers = ['"Tên học sinh"', '"Điểm số"'].join('\t'); 
         const rows = successfulResults.map(r =>
-            [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`, `"${r.fileName}"`].join('\t')
+            [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`].join('\t') // Đã loại bỏ r.fileName
         );
 
         const csvContent = [headers, ...rows].join('\n');
@@ -280,13 +319,13 @@ YÊU CẦU: 1. Trích xuất tất cả học sinh. 2. Tên phải giữ nguyên
             
             try {
                 // Gọi API để trích xuất dữ liệu
-                const extractedData = await extractDataFromImage(file);
+                const extractedData = await extractDataFromImageCallback(file);
                 
                 if (Array.isArray(extractedData) && extractedData.length > 0) {
                     extractedData.forEach(data => {
                         newResults.push({
                             status: 'success',
-                            fileName: file.name,
+                            fileName: file.name, // Giữ lại trong object để tiện theo dõi, nhưng không hiển thị
                             ten_hoc_sinh: data.ten_hoc_sinh || 'N/A',
                             diem_so: data.diem_so || 'N/A'
                         });
@@ -325,7 +364,7 @@ YÊU CẦU: 1. Trích xuất tất cả học sinh. 2. Tên phải giữ nguyên
             downloadCSV(newResults);
         }
         
-    }, [downloadCSV, extractDataFromImage]); // Thêm extractDataFromImage vào dependencies
+    }, [downloadCSV, extractDataFromImageCallback]);
 
     // Xử lý thay đổi tệp (TỰ ĐỘNG XỬ LÝ)
     const handleFileChange = (e) => {
@@ -370,8 +409,7 @@ YÊU CẦU: 1. Trích xuất tất cả học sinh. 2. Tên phải giữ nguyên
         fileInputRef.current?.click();
     };
     
-    // Nếu API key bị thiếu, hiển thị thông báo lỗi (Lỗi này sẽ xuất hiện trên Netlify nếu bạn chưa set biến môi trường)
-    // Sẽ hiển thị lỗi này cho đến khi useEffect hoàn thành và key được thiết lập
+    // Nếu API key đang trong quá trình tải hoặc bị thiếu, hiển thị thông báo
     if (apiKey === null || (apiKey === "" && !error)) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-900 p-4">
