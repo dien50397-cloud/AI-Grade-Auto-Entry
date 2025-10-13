@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 
 // =======================================================
-// 1. TYPES & API SERVICE
+// 1. TYPES & HẰNG SỐ
 // =======================================================
 
 /**
@@ -21,30 +21,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
  * @property {string} [errorMessage]
  */
 
-// HÀM KIỂM TRA MÔI TRƯỜNG ĐỂ LẤY KHÓA API
-// Sử dụng hàm gọi tức thì an toàn (IIFE) để xử lý lỗi biên dịch cục bộ và vẫn truy cập đúng biến Netlify/Vite
-const getApiKey = (() => {
-    // 1. Kiểm tra biến an toàn của môi trường code editor (nếu tồn tại)
-    if (typeof __api_key !== 'undefined') {
-        return __api_key;
-    }
-    
-    // 2. Thử kiểm tra biến môi trường VITE/Netlify
-    try {
-        if (typeof import.meta !== 'undefined' && import.meta.env) {
-            return import.meta.env.VITE_GEMINI_API_KEY || "";
-        }
-    } catch (e) {
-        // Bỏ qua lỗi ReferenceError nếu import.meta không được định nghĩa
-    }
-
-    // 3. Trả về rỗng nếu không tìm thấy
-    return "";
-})();
-
-
-// KHAI BÁO CÁC HẰNG SỐ CỦA DỊCH VỤ
-const GEMINI_API_KEY = getApiKey();
+// KHAI BÁO CÁC HẰNG SỐ CỦA DỊCH VỤ (KHÔNG BAO GỒM API KEY)
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
 
 /**
@@ -62,14 +39,15 @@ const fileToGenerativePart = async (file) => {
 };
 
 /**
- * Hàm gọi API Gemini để trích xuất dữ liệu
+ * Hàm gọi API Gemini để trích xuất dữ liệu (Chấp nhận apiKey như một tham số)
  * @param {File} imageFile 
+ * @param {string} apiKey - Phải được truyền từ React State
  * @returns {Promise<StudentScore[]>}
  */
 const extractDataFromImage = async (imageFile, apiKey) => {
-    // Kiểm tra khóa API để đưa ra thông báo lỗi rõ ràng hơn
+    // API Key được truyền từ state component, không cần kiểm tra lại ở đây.
     if (!apiKey) {
-        throw new Error("API Key chưa được thiết lập.");
+         throw new Error("API Key chưa được thiết lập. (Lỗi Runtime)");
     }
 
     const model = 'gemini-2.5-flash-preview-05-20';
@@ -126,12 +104,10 @@ YÊU CẦU: 1. Trích xuất tất cả học sinh. 2. Tên phải giữ nguyên
                 return parsedData;
 
             } else if (response.status === 429 || response.status >= 500) {
-                // Throttling hoặc Server Error: thử lại
                 lastError = new Error(`API call failed with status ${response.status}. Retrying...`);
-                await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000)); // Exponential Backoff
+                await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
                 continue;
             } else {
-                // Các lỗi khác (400, 401, 403): không thử lại
                 throw new Error(`API call failed with status ${response.status}: ${response.statusText}`);
             }
 
@@ -195,7 +171,6 @@ const ResultsTable = ({ results }) => {
                 <thead className="bg-gray-600">
                     <tr>
                         <th className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">Trạng thái</th>
-                        {/* Đã loại bỏ: Tên File */}
                         <th className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">Tên Học sinh</th>
                         <th className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider">Điểm số</th>
                     </tr>
@@ -208,7 +183,6 @@ const ResultsTable = ({ results }) => {
                                     {result.status === 'success' ? 'Thành công' : 'Lỗi'}
                                 </span>
                             </td>
-                            {/* Đã loại bỏ: Tên File */}
                             <td className="px-4 py-3 text-sm text-gray-300 font-medium">{result.ten_hoc_sinh}</td>
                             <td className="px-4 py-3 text-sm font-bold text-gray-100">
                                 {result.status === 'success' ? result.diem_so : (
@@ -242,37 +216,38 @@ export default function App() {
     const [accentColor, setAccentColor] = useState('#4f46e5'); // Indigo đậm mặc định (Deep Blue Theme)
     const fileInputRef = useRef(null);
 
-    // NEW STATE: Lưu trữ API Key ở Runtime
+    // NEW STATE: Lưu trữ API Key ở Runtime (Khởi tạo là null)
     const [apiKey, setApiKey] = useState(null);
 
     // Sử dụng useEffect để khởi tạo API Key an toàn sau khi component đã render
     useEffect(() => {
-        let key = null;
+        let key = "";
+        
+        // 1. Cố gắng lấy key từ biến môi trường Netlify/Vite (Cú pháp này được xử lý trong quá trình build)
         try {
-            // Cú pháp Netlify/Vite (Chỉ chạy sau khi build)
+            // Cần truy cập an toàn để tránh crash khi code editor không hỗ trợ import.meta
             if (typeof import.meta !== 'undefined' && import.meta.env) {
                 key = import.meta.env.VITE_GEMINI_API_KEY || "";
             }
         } catch (e) {
-            // Lỗi ReferenceError/TypeError do import.meta không được định nghĩa
-            // Bỏ qua, key vẫn là null/""
+            // Bỏ qua lỗi cú pháp/tham chiếu nếu môi trường không hỗ trợ
         }
         
-        // Kiểm tra biến an toàn của code editor (nếu tồn tại)
+        // 2. Kiểm tra biến an toàn của code editor (nếu tồn tại)
         if (typeof __api_key !== 'undefined') {
             key = __api_key;
         }
 
         setApiKey(key);
-        // Nếu key bị thiếu, đặt lỗi để hiển thị thông báo thay vì crash
-        if (!key) {
-            setError("API Key chưa được thiết lập. Vui lòng kiểm tra biến môi trường VITE_GEMINI_API_KEY trên Netlify.");
-        }
     }, []);
 
-    // Hàm gọi API Gemini (Đã chuyển vào đây để sử dụng API Key trong state)
+
+    // Hàm gọi API Gemini (Sử dụng useCallback để đảm bảo hiệu suất)
     const extractDataFromImageCallback = useCallback(async (imageFile) => {
-        // Gọi hàm service extractDataFromImage với apiKey từ state
+        // Kiểm tra Key trước khi gọi API
+        if (!apiKey) {
+            throw new Error("API Key chưa được thiết lập. Vui lòng kiểm tra biến môi trường.");
+        }
         return extractDataFromImage(imageFile, apiKey);
     }, [apiKey]);
 
@@ -285,7 +260,7 @@ export default function App() {
         // CHỈ BAO GỒM: Tên học sinh và Điểm số
         const headers = ['"Tên học sinh"', '"Điểm số"'].join('\t'); 
         const rows = successfulResults.map(r =>
-            [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`].join('\t') // Đã loại bỏ r.fileName
+            [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`].join('\t')
         );
 
         const csvContent = [headers, ...rows].join('\n');
@@ -325,7 +300,7 @@ export default function App() {
                     extractedData.forEach(data => {
                         newResults.push({
                             status: 'success',
-                            fileName: file.name, // Giữ lại trong object để tiện theo dõi, nhưng không hiển thị
+                            fileName: file.name, // Giữ lại trong object để tiện theo dõi
                             ten_hoc_sinh: data.ten_hoc_sinh || 'N/A',
                             diem_so: data.diem_so || 'N/A'
                         });
@@ -409,8 +384,8 @@ export default function App() {
         fileInputRef.current?.click();
     };
     
-    // Nếu API key đang trong quá trình tải hoặc bị thiếu, hiển thị thông báo
-    if (apiKey === null || (apiKey === "" && !error)) {
+    // Phần hiển thị TẢI/LỖI API KEY (React sẽ render an toàn)
+    if (apiKey === null) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-900 p-4">
                 <div className="max-w-md w-full bg-gray-800 p-6 rounded-xl shadow-2xl text-center border-l-4 border-indigo-500">
@@ -438,6 +413,7 @@ export default function App() {
         );
     }
 
+    // Phần hiển thị Ứng dụng chính (Chỉ chạy khi có API Key)
     return (
         <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8 bg-gray-900" onDragEnter={handleDrag}>
             {/* KHỐI CHỌN MÀU QUANG PHỔ */}
