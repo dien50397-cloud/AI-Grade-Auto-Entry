@@ -147,9 +147,79 @@ const CsvIcon = (props) => (
     </svg>
 );
 
+const XIcon = (props) => (
+    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-x">
+        <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+    </svg>
+);
+
 
 // =======================================================
-// 3. PERFORMANCE SUMMARY COMPONENT
+// 3. IMAGE MODAL COMPONENT (NEW)
+// =======================================================
+
+/**
+ * Component hiển thị ảnh gốc trong modal
+ * @param {{file: File, onClose: function(): void, accentColor: string}} props
+ */
+const ImageModal = ({ file, onClose, accentColor }) => {
+    const [imageUrl, setImageUrl] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        if (file) {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                setImageUrl(reader.result);
+                setLoading(false);
+            };
+            reader.readAsDataURL(file);
+        }
+    }, [file]);
+
+    if (!file) return null;
+
+    return (
+        <div 
+            className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 transition-opacity"
+            onClick={onClose}
+        >
+            <div 
+                className="bg-gray-800 rounded-xl max-w-4xl w-full max-h-full overflow-hidden flex flex-col"
+                onClick={(e) => e.stopPropagation()}
+            >
+                {/* Header */}
+                <div className="p-4 flex justify-between items-center border-b border-gray-700">
+                    <h3 className="text-lg font-semibold text-gray-100" style={{ color: accentColor }}>
+                        Xem trước File Gốc: {file.name}
+                    </h3>
+                    <button onClick={onClose} className="p-2 rounded-full text-gray-400 hover:bg-gray-700 transition-colors">
+                        <XIcon className="w-5 h-5" />
+                    </button>
+                </div>
+                
+                {/* Body - Image */}
+                <div className="flex-grow overflow-y-auto p-4 flex items-center justify-center">
+                    {loading ? (
+                        <div className="text-center p-10">
+                            <SpinnerIcon className="w-8 h-8 mx-auto mb-3" style={{ color: accentColor }} />
+                            <p className="text-gray-400">Đang tải ảnh...</p>
+                        </div>
+                    ) : (
+                        <img 
+                            src={imageUrl} 
+                            alt={`Review: ${file.name}`} 
+                            className="max-w-full max-h-[80vh] object-contain rounded-lg"
+                        />
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// =======================================================
+// 4. PERFORMANCE SUMMARY COMPONENT
 // =======================================================
 
 /**
@@ -224,14 +294,14 @@ const PerformanceSummary = ({ results, accentColor }) => {
 };
 
 // =======================================================
-// 4. RESULTS TABLE COMPONENT
+// 5. RESULTS TABLE COMPONENT
 // =======================================================
 
 /**
  * Component hiển thị kết quả trích xuất
- * @param {{results: ExtractionResult[], onSort: function(string): void, sortConfig: {key: string, direction: string}, filterStatus: string}} props
+ * @param {{results: ExtractionResult[], onSort: function(string): void, sortConfig: {key: string, direction: string}, filterStatus: string, onRowClick: function(string): void}} props
  */
-const ResultsTable = ({ results, onSort, sortConfig, filterStatus }) => {
+const ResultsTable = ({ results, onSort, sortConfig, filterStatus, onRowClick }) => {
     if (results.length === 0) return null;
 
     // Logic Lọc theo trạng thái
@@ -285,7 +355,11 @@ const ResultsTable = ({ results, onSort, sortConfig, filterStatus }) => {
                 </thead>
                 <tbody className="bg-gray-800 divide-y divide-gray-700">
                     {filteredResults.map((result, index) => (
-                        <tr key={index} className={result.status === 'error' ? 'bg-red-900/20 hover:bg-red-900/40 transition-colors' : 'hover:bg-indigo-900/20 transition-colors'}>
+                        <tr 
+                            key={index} 
+                            className={result.status === 'error' ? 'bg-red-900/20 hover:bg-red-900/40 transition-colors cursor-pointer' : 'hover:bg-indigo-900/20 transition-colors cursor-pointer'}
+                            onClick={() => onRowClick(result.fileName)}
+                        >
                             {/* Ô Trạng thái */}
                             <td className="px-4 py-3 align-top w-auto">
                                 <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${result.status === 'success' ? 'bg-green-700 text-green-100' : 'bg-red-700 text-red-100'}`}>
@@ -319,7 +393,7 @@ const ResultsTable = ({ results, onSort, sortConfig, filterStatus }) => {
 
 
 // =======================================================
-// 5. MAIN APP COMPONENT
+// 6. MAIN APP COMPONENT
 // =======================================================
 
 export default function App() {
@@ -337,17 +411,21 @@ export default function App() {
     // Sắp xếp và Lọc
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'ascending' });
     const [filterStatus, setFilterStatus] = useState('all'); // 'all', 'pass', 'fail'
+    
+    // IMAGE PREVIEW STATE
+    const [selectedImageFile, setSelectedImageFile] = useState(null); // Lưu trữ File object được chọn
 
+    // Logic Sắp xếp
     const sortedResults = React.useMemo(() => {
         let sortableItems = [...results];
-        // Đảm bảo chỉ sắp xếp các kết quả thành công dựa trên điểm số (number), các kết quả lỗi luôn ở cuối
+        // Sắp xếp
         sortableItems.sort((a, b) => {
             const isAError = a.status !== 'success';
             const isBError = b.status !== 'success';
 
             if (isAError && !isBError) return 1;
             if (!isAError && isBError) return -1;
-            if (isAError && isBError) return 0; // Giữ nguyên thứ tự giữa các lỗi
+            if (isAError && isBError) return 0; 
 
             if (sortConfig.key !== null) {
                 let aValue = a[sortConfig.key];
@@ -386,7 +464,7 @@ export default function App() {
     useEffect(() => {
         let key = "";
         
-        // 1. Cố gắng lấy key từ biến môi trường Netlify/Vite (Cú pháp này được xử lý trong quá trình build)
+        // 1. Cố gắng lấy key từ biến môi trường Netlify/Vite
         try {
             if (typeof import.meta !== 'undefined' && import.meta.env) {
                 key = import.meta.env.VITE_GEMINI_API_KEY || "";
@@ -550,6 +628,14 @@ export default function App() {
     const onButtonClick = () => {
         fileInputRef.current?.click();
     };
+
+    // Hàm xử lý khi click vào hàng trong bảng
+    const handleRowClick = (fileName) => {
+        const fileObject = files.find(f => f.name === fileName);
+        if (fileObject) {
+            setSelectedImageFile(fileObject);
+        }
+    };
     
     // Phần hiển thị TẢI/LỖI API KEY (React sẽ render an toàn)
     if (apiKey === null) {
@@ -582,6 +668,13 @@ export default function App() {
 
     return (
         <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8 bg-gray-900" onDragEnter={handleDrag}>
+            {/* Modal hiển thị ảnh */}
+            <ImageModal 
+                file={selectedImageFile} 
+                onClose={() => setSelectedImageFile(null)} 
+                accentColor={accentColor}
+            />
+
             {/* KHỐI CHỌN MÀU QUANG PHỔ */}
             <div className="absolute top-4 right-4 p-3 bg-gray-800 rounded-xl shadow-md flex items-center space-x-3 z-10 border border-gray-700">
                 <label htmlFor="colorPicker" className="text-sm font-semibold text-gray-400">Chọn Màu Nhấn:</label>
@@ -692,7 +785,7 @@ export default function App() {
                     </div>
                 )}
                 
-                <ResultsTable results={sortedResults} onSort={handleSort} sortConfig={sortConfig} filterStatus={filterStatus} />
+                <ResultsTable results={sortedResults} onSort={handleSort} sortConfig={sortConfig} filterStatus={filterStatus} onRowClick={handleRowClick} />
             </main>
             <footer className="w-full max-w-4xl mx-auto text-center mt-6">
                 <p className="text-sm text-gray-500">Powered by Google Gemini</p>
