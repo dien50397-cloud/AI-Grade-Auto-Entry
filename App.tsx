@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 
 // =======================================================
 // 1. TYPES & HẰNG SỐ
@@ -9,6 +9,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
  * @typedef {object} StudentScore
  * @property {string} ten_hoc_sinh
  * @property {string} diem_so
+ * @property {string} [custom_data] Tên cột tùy chỉnh
  */
 
 /**
@@ -18,6 +19,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
  * @property {string} fileName
  * @property {string} ten_hoc_sinh
  * @property {string} diem_so
+ * @property {string} [custom_data]
  * @property {string} [errorMessage]
  */
 
@@ -42,10 +44,10 @@ const fileToGenerativePart = async (file) => {
  * Hàm gọi API Gemini để trích xuất dữ liệu (Chấp nhận apiKey như một tham số)
  * @param {File} imageFile 
  * @param {string} apiKey - Phải được truyền từ React State
+ * @param {string[]} requiredColumns - Các cột tùy chỉnh cần trích xuất
  * @returns {Promise<StudentScore[]>}
  */
-const extractDataFromImage = async (imageFile, apiKey) => {
-    // API Key được truyền từ state component, không cần kiểm tra lại ở đây.
+const extractDataFromImage = async (imageFile, apiKey, requiredColumns) => {
     if (!apiKey) {
          throw new Error("API Key chưa được thiết lập. (Lỗi Runtime)");
     }
@@ -53,19 +55,43 @@ const extractDataFromImage = async (imageFile, apiKey) => {
     const model = 'gemini-2.5-flash-preview-05-20';
     const imagePart = await fileToGenerativePart(imageFile);
     
-    // Prompt yêu cầu trích xuất tên và điểm
-    const prompt = `Bạn là một CHUYÊN GIA PHÂN TÍCH BÀI KIỂM TRA. Từ hình ảnh danh sách điểm, hãy trích xuất **TẤT CẢ** các cặp Tên học sinh và Tổng điểm mà bạn tìm thấy. 
-YÊU CẦU: 1. Trích xuất tất cả học sinh. 2. Tên phải giữ nguyên Tiếng Việt có dấu. 3. Điểm số phải là giá trị số. Trả về MẢNG JSON.`;
+    const columnsStr = requiredColumns.join(', ');
+
+    // Prompt yêu cầu trích xuất cột tùy chỉnh
+    const prompt = `Bạn là một CHUYÊN GIA PHÂN TÍCH BÀI KIỂM TRA. Từ hình ảnh danh sách điểm, hãy trích xuất **TẤT CẢ** các cột sau: [${columnsStr}].
+
+YÊU CẦU:
+1. Trích xuất tất cả học sinh.
+2. Cột Tên học sinh phải được chuẩn hóa về định dạng Proper Case (Chữ cái đầu mỗi từ viết hoa, ví dụ: 'nguyẽn văn a' -> 'Nguyễn Văn A').
+3. Điểm số phải được chuẩn hóa về thang điểm 10.0 (nếu phát hiện thang điểm khác, hãy quy đổi về 10.0).
+4. Đảm bảo trả về chính xác các trường trong cấu trúc JSON, kể cả trường dữ liệu tùy chỉnh.`;
+
+    // Định nghĩa Schema dựa trên các cột tùy chỉnh
+    const properties = {
+        ten_hoc_sinh: { type: "STRING", description: "Họ tên đầy đủ của học sinh (đã chuẩn hóa)." },
+        diem_so: { type: "STRING", description: "Điểm số cuối cùng đã chuẩn hóa về thang 10.0." }
+    };
+
+    const requiredFields = ['ten_hoc_sinh', 'diem_so'];
+
+    // Thêm cột tùy chỉnh vào schema
+    requiredColumns.forEach(col => {
+        if (col.toLowerCase() !== 'tên học sinh' && col.toLowerCase() !== 'điểm số') {
+            properties[`col_${col.replace(/\s/g, '_').toLowerCase()}`] = { 
+                type: "STRING", 
+                description: `Dữ liệu trích xuất cho cột: ${col}` 
+            };
+            requiredFields.push(`col_${col.replace(/\s/g, '_').toLowerCase()}`);
+        }
+    });
+
 
     const responseSchema = {
         type: "ARRAY",
         items: {
             type: "OBJECT",
-            properties: {
-                ten_hoc_sinh: { type: "STRING", description: "Họ tên đầy đủ của học sinh." },
-                diem_so: { type: "STRING", description: "Điểm số cuối cùng (ví dụ: 8.5, 10.0)." }
-            },
-            required: ['ten_hoc_sinh', 'diem_so'],
+            properties: properties,
+            required: requiredFields,
         },
     };
 
@@ -101,7 +127,20 @@ YÊU CẦU: 1. Trích xuất tất cả học sinh. 2. Tên phải giữ nguyên
                 if (!Array.isArray(parsedData)) {
                     throw new Error("Đầu ra JSON không phải là Mảng hợp lệ.");
                 }
-                return parsedData;
+
+                // Chuyển đổi tên trường tùy chỉnh để khớp với cấu trúc trong React
+                const standardizedData = parsedData.map(item => {
+                    const newItem = { ten_hoc_sinh: item.ten_hoc_sinh, diem_so: item.diem_so };
+                    Object.keys(item).forEach(key => {
+                        if (key.startsWith('col_')) {
+                            // Lưu trữ dữ liệu cột tùy chỉnh trong trường custom_data
+                            newItem.custom_data = item[key];
+                        }
+                    });
+                    return newItem;
+                });
+                
+                return standardizedData;
 
             } else if (response.status === 429 || response.status >= 500) {
                 lastError = new Error(`API call failed with status ${response.status}. Retrying...`);
@@ -125,6 +164,39 @@ YÊU CẦU: 1. Trích xuất tất cả học sinh. 2. Tên phải giữ nguyên
     }
 };
 
+/**
+ * Hàm gọi AI lần 2 để lấy nhận xét (feedback)
+ */
+const getAiFeedback = async (apiKey, successfulResults, performanceSummary) => {
+    if (!apiKey || successfulResults.length === 0) return null;
+
+    const dataSnapshot = successfulResults.map(r => ({
+        ten_hoc_sinh: r.ten_hoc_sinh,
+        diem_so: r.diem_so,
+    }));
+
+    const prompt = `Phân tích bộ dữ liệu điểm số sau: ${JSON.stringify(dataSnapshot)}. Điểm trung bình là ${performanceSummary.averageScore}, Tỷ lệ đỗ là ${performanceSummary.passRate}. Dựa trên các chỉ số này, hãy đưa ra một nhận xét ngắn gọn (tối đa 2 câu) về hiệu suất của lớp. Nếu phát hiện điểm số bất thường (quá cao hoặc quá thấp so với trung bình), hãy đưa ra cảnh báo.`;
+
+    const payload = {
+        contents: [{ parts: [{ text: prompt }] }],
+    };
+
+    try {
+        const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        return result?.candidates?.[0]?.content?.parts?.[0]?.text || "Không thể tạo nhận xét từ AI.";
+    } catch (e) {
+        console.error("Lỗi khi lấy feedback từ AI:", e);
+        return "Lỗi khi kết nối AI để phân tích.";
+    }
+};
+
+
 // =======================================================
 // 2. ICON COMPONENTS
 // =======================================================
@@ -147,256 +219,172 @@ const CsvIcon = (props) => (
     </svg>
 );
 
-const XIcon = (props) => (
-    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-x">
-        <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+const InfoIcon = (props) => (
+    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-info">
+        <circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" />
     </svg>
 );
 
 
 // =======================================================
-// 3. IMAGE MODAL COMPONENT (NEW)
+// 3. RESULTS TABLE COMPONENTS (Đã hợp nhất Logic)
 // =======================================================
 
 /**
- * Component hiển thị ảnh gốc trong modal
- * @param {{file: File, onClose: function(): void, accentColor: string}} props
+ * Component hiển thị tóm tắt hiệu suất lớp học
  */
-const ImageModal = ({ file, onClose, accentColor }) => {
-    const [imageUrl, setImageUrl] = useState(null);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        if (file) {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                setImageUrl(reader.result);
-                setLoading(false);
-            };
-            reader.readAsDataURL(file);
-        }
-    }, [file]);
-
-    if (!file) return null;
-
-    return (
-        <div 
-            className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 transition-opacity"
-            onClick={onClose}
-        >
-            <div 
-                className="bg-gray-800 rounded-xl max-w-4xl w-full max-h-full overflow-hidden flex flex-col"
-                onClick={(e) => e.stopPropagation()}
-            >
-                {/* Header */}
-                <div className="p-4 flex justify-between items-center border-b border-gray-700">
-                    <h3 className="text-lg font-semibold text-gray-100" style={{ color: accentColor }}>
-                        Xem trước File Gốc: {file.name}
-                    </h3>
-                    <button onClick={onClose} className="p-2 rounded-full text-gray-400 hover:bg-gray-700 transition-colors">
-                        <XIcon className="w-5 h-5" />
-                    </button>
-                </div>
-                
-                {/* Body - Image */}
-                <div className="flex-grow overflow-y-auto p-4 flex items-center justify-center">
-                    {loading ? (
-                        <div className="text-center p-10">
-                            <SpinnerIcon className="w-8 h-8 mx-auto mb-3" style={{ color: accentColor }} />
-                            <p className="text-gray-400">Đang tải ảnh...</p>
-                        </div>
-                    ) : (
-                        <img 
-                            src={imageUrl} 
-                            alt={`Review: ${file.name}`} 
-                            className="max-w-full max-h-[80vh] object-contain rounded-lg"
-                        />
-                    )}
-                </div>
-            </div>
-        </div>
-    );
-};
-
-// =======================================================
-// 4. PERFORMANCE SUMMARY COMPONENT
-// =======================================================
-
-/**
- * Component hiển thị tóm tắt hiệu suất
- * @param {{results: ExtractionResult[], accentColor: string}} props
- */
-const PerformanceSummary = ({ results, accentColor }) => {
-    const successfulResults = results.filter(r => r.status === 'success');
-    if (successfulResults.length === 0) return null;
-
-    let totalScore = 0;
-    let countGioi = 0; // >= 8.0
-    let countKha = 0;  // >= 6.5
-    let countTB = 0;   // >= 5.0
-    let countYeu = 0;  // < 5.0
-
-    successfulResults.forEach(r => {
-        const score = parseFloat(r.diem_so);
-        if (!isNaN(score)) {
-            totalScore += score;
-            if (score >= 8.0) countGioi++;
-            else if (score >= 6.5) countKha++;
-            else if (score >= 5.0) countTB++;
-            else countYeu++;
-        }
-    });
-
-    const totalStudents = successfulResults.length;
-    const avgScore = totalStudents > 0 ? (totalScore / totalStudents).toFixed(2) : 'N/A';
-    const percentPass = totalStudents > 0 ? (((countGioi + countKha + countTB) / totalStudents) * 100).toFixed(1) : '0';
-
-    const categories = [
-        { label: 'Xuất Sắc/Giỏi ({'>'}= 8.0)', value: countGioi, color: 'text-green-400', bgColor: 'bg-green-900/40' },
-        { label: 'Khá ({'>'}= 6.5)', value: countKha, color: 'text-blue-400', bgColor: 'bg-blue-900/40' },
-        { label: 'Trung Bình ({'>'}= 5.0)', value: countTB, color: 'text-yellow-400', bgColor: 'bg-yellow-900/40' },
-        { label: 'Yếu ({'<'} 5.0)', value: countYeu, color: 'text-red-400', bgColor: 'bg-red-900/40' }
+const PerformanceSummary = ({ summary, accentColor }) => {
+    const data = [
+        { label: "Tổng số học sinh", value: summary.totalStudents },
+        { label: "Điểm trung bình lớp", value: `${summary.averageScore} / 10.0`, color: summary.averageScore >= 5.0 ? 'text-green-400' : 'text-red-400' },
+        { label: "Tỷ lệ Đỗ ({'>'}= 5.0)", value: `${summary.passRate}%`, color: summary.passRate >= 70 ? 'text-green-400' : 'text-yellow-400' },
+        { label: "Giỏi ({'>'}= 8.0)", value: `${summary.excellentCount} hs`, color: 'text-indigo-400' },
     ];
 
     return (
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Cột 1: Chỉ số Chính */}
-            <div className="md:col-span-1 p-6 rounded-xl border border-gray-700 shadow-lg" style={{ borderColor: accentColor }}>
-                <h3 className="text-lg font-bold text-gray-100 mb-4" style={{ color: accentColor }}>Tóm Tắt Hiệu Suất</h3>
-                <div className="space-y-3">
-                    <div className="flex justify-between items-center text-gray-300">
-                        <span className="font-medium">Tổng số học sinh</span>
-                        <span className="text-xl font-extrabold" style={{ color: accentColor }}>{totalStudents}</span>
-                    </div>
-                    <div className="flex justify-between items-center text-gray-300 border-t border-gray-700 pt-3">
-                        <span className="font-medium">Điểm trung bình lớp</span>
-                        <span className="text-2xl font-extrabold text-white">{avgScore}</span>
-                    </div>
-                    <div className="flex justify-between items-center text-gray-300 border-t border-gray-700 pt-3">
-                        <span className="font-medium">Tỷ lệ Đỗ ({'>'}= 5.0)</span>
-                        <span className="text-xl font-extrabold text-green-400">{percentPass}%</span>
-                    </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
+            {data.map((item, index) => (
+                <div key={index} className="bg-gray-700 p-4 rounded-xl shadow-lg">
+                    <p className="text-sm font-semibold text-gray-400">{item.label}</p>
+                    <p className={`text-2xl font-bold mt-1 ${item.color || 'text-gray-100'}`}>{item.value}</p>
                 </div>
-            </div>
-
-            {/* Cột 2 & 3: Phân loại Điểm */}
-            <div className="md:col-span-2 grid grid-cols-2 gap-4">
-                {categories.map(cat => (
-                    <div key={cat.label} className={`p-4 rounded-xl shadow-md ${cat.bgColor}`}>
-                        <p className={`text-sm font-semibold ${cat.color}`}>{cat.label}</p>
-                        <p className="text-2xl font-extrabold text-gray-100 mt-1">{cat.value}</p>
-                        <p className="text-xs text-gray-400 mt-0.5">{totalStudents > 0 ? ((cat.value / totalStudents) * 100).toFixed(1) : 0}% tổng số</p>
-                    </div>
-                ))}
-            </div>
+            ))}
         </div>
     );
 };
 
-// =======================================================
-// 5. RESULTS TABLE COMPONENT
-// =======================================================
-
 /**
- * Component hiển thị kết quả trích xuất
- * @param {{results: ExtractionResult[], onSort: function(string): void, sortConfig: {key: string, direction: string}, filterStatus: string, onRowClick: function(string): void}} props
+ * Component hiển thị thông tin phản hồi từ AI
  */
-const ResultsTable = ({ results, onSort, sortConfig, filterStatus, onRowClick }) => {
-    if (results.length === 0) return null;
+const AiFeedbackBox = ({ feedback, accentColor, isLoading }) => {
+    if (!feedback) return null;
 
-    // Logic Lọc theo trạng thái
-    const filteredResults = results.filter(result => {
-        if (filterStatus === 'all') return true;
-        
-        const score = parseFloat(result.diem_so);
-        const passed = !isNaN(score) && score >= 5.0;
-
-        if (filterStatus === 'pass') return result.status === 'success' && passed;
-        if (filterStatus === 'fail') return result.status === 'success' && !passed;
-
-        // Nếu là lỗi trích xuất, luôn hiển thị trong chế độ 'all'
-        return result.status === 'error';
-    });
-
-
-    const successfulCount = filteredResults.filter(r => r.status === 'success').length;
-    const errorCount = filteredResults.filter(r => r.status === 'error').length;
-
-    const getSortIndicator = (key) => {
-        if (sortConfig.key !== key) return null;
-        return sortConfig.direction === 'ascending' ? ' ▲' : ' ▼';
-    };
+    const isWarning = feedback.toLowerCase().includes('bất thường') || feedback.toLowerCase().includes('cảnh báo');
 
     return (
-        <div className="mt-10 overflow-x-auto shadow-lg rounded-xl">
-            <h2 className="text-xl font-bold p-4 bg-gray-700 text-gray-100 rounded-t-xl">
-                Chi Tiết Kết Quả ({successfulCount} thành công, {errorCount} lỗi)
-            </h2>
-            <table className="min-w-full divide-y divide-gray-600">
-                <thead className="bg-gray-600">
-                    <tr>
-                        {/* Cột 1: Trạng thái (Fixed width) */}
-                        <th className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider w-auto">Trạng thái</th>
-                        {/* Cột 2: Tên Học sinh (Takes remaining space) - Sắp xếp theo Tên */}
-                        <th 
-                            className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider w-full cursor-pointer hover:text-white transition-colors"
-                            onClick={() => onSort('ten_hoc_sinh')}
-                        >
-                            Tên Học sinh {getSortIndicator('ten_hoc_sinh')}
-                        </th>
-                        {/* Cột 3: Điểm số (Fixed small width) - Sắp xếp theo Điểm */}
-                        <th 
-                            className="px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider w-20 cursor-pointer hover:text-white transition-colors"
-                            onClick={() => onSort('diem_so')}
-                        >
-                            Điểm số {getSortIndicator('diem_so')}
-                        </th>
-                    </tr>
-                </thead>
-                <tbody className="bg-gray-800 divide-y divide-gray-700">
-                    {filteredResults.map((result, index) => (
-                        <tr 
-                            key={index} 
-                            className={result.status === 'error' ? 'bg-red-900/20 hover:bg-red-900/40 transition-colors cursor-pointer' : 'hover:bg-indigo-900/20 transition-colors cursor-pointer'}
-                            onClick={() => onRowClick(result.fileName)}
-                        >
-                            {/* Ô Trạng thái */}
-                            <td className="px-4 py-3 align-top w-auto">
-                                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${result.status === 'success' ? 'bg-green-700 text-green-100' : 'bg-red-700 text-red-100'}`}>
-                                    {result.status === 'success' ? 'Thành công' : 'Lỗi'}
-                                </span>
-                            </td>
-                            {/* Ô Tên Học sinh: NGẮT DÒNG VÀ CĂN CHỈNH CHIỀU CAO */}
-                            <td className="px-4 py-3 text-sm text-gray-300 font-medium w-full break-all">
-                                {result.ten_hoc_sinh}
-                            </td>
-                            {/* Ô Điểm số */}
-                            <td className="px-4 py-3 text-sm font-bold text-gray-100 w-20 text-right align-top">
-                                {result.status === 'success' ? result.diem_so : (
-                                    <span className="text-red-400 italic text-xs" title={result.errorMessage}>
-                                        {result.errorMessage || 'Lỗi chung'}
-                                    </span>
-                                )}
-                            </td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-            {filteredResults.length === 0 && (
-                <div className="p-6 text-center text-gray-500 bg-gray-800 rounded-b-xl">
-                    Không tìm thấy kết quả phù hợp với bộ lọc hiện tại.
-                </div>
+        <div className="mt-6 p-4 rounded-xl shadow-lg border-l-4"
+             style={{ 
+                 borderColor: isWarning ? '#ef4444' : accentColor,
+                 backgroundColor: isWarning ? 'rgba(239, 68, 68, 0.1)' : 'rgba(79, 70, 229, 0.1)'
+             }}>
+            <h3 className="text-lg font-bold flex items-center mb-2" style={{ color: isWarning ? '#ef4444' : accentColor }}>
+                <InfoIcon className="w-5 h-5 mr-2" /> 
+                Phân tích của AI
+            </h3>
+            {isLoading ? (
+                 <p className="text-sm text-gray-400 animate-pulse">AI đang phân tích dữ liệu...</p>
+            ) : (
+                <p className="text-sm text-gray-300">{feedback}</p>
             )}
         </div>
     );
 };
 
 
+/**
+ * Component hiển thị bảng kết quả (Bao gồm chức năng Chỉnh sửa Inline)
+ */
+const ResultsTable = ({ results, editedScores, onScoreChange, onSort, sortConfig, hasCustomColumn, customColumnsDisplay }) => {
+    
+    // Tạo tiêu đề động cho bảng
+    const headers = [
+        { key: 'status', label: 'Trạng thái', sortable: false },
+        { key: 'ten_hoc_sinh', label: 'Tên Học sinh', sortable: true },
+    ];
+
+    if (hasCustomColumn) {
+        headers.push({ 
+            key: 'custom_data', 
+            label: customColumnsDisplay[0], // Hiện thị tên cột tùy chỉnh đầu tiên
+            sortable: false 
+        });
+    }
+
+    headers.push({ key: 'diem_so', label: 'Điểm số (Thang 10)', sortable: true });
+
+    const getSortIndicator = (key) => {
+        if (sortConfig.key === key) {
+            return sortConfig.direction === 'ascending' ? ' ▲' : ' ▼';
+        }
+        return '';
+    };
+
+    return (
+        <div className="mt-10 overflow-x-auto shadow-lg rounded-xl">
+            <h2 className="text-xl font-bold p-4 bg-gray-700 text-gray-100 rounded-t-xl">
+                Chi Tiết Kết Quả ({results.filter(r => r.status === 'success').length} thành công)
+            </h2>
+            <table className="min-w-full divide-y divide-gray-600">
+                <thead className="bg-gray-600">
+                    <tr>
+                        {headers.map((header) => (
+                            <th 
+                                key={header.key} 
+                                className={`px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider ${header.sortable ? 'cursor-pointer hover:bg-gray-500 transition-colors' : ''}`}
+                                onClick={() => header.sortable && onSort(header.key)}
+                                style={{ width: header.key === 'diem_so' ? '120px' : header.key === 'status' ? '100px' : 'auto' }}
+                            >
+                                {header.label}
+                                {getSortIndicator(header.key)}
+                            </th>
+                        ))}
+                    </tr>
+                </thead>
+                <tbody className="bg-gray-800 divide-y divide-gray-700">
+                    {results.map((result, index) => {
+                        const editKey = `${index}_${result.fileName}`;
+                        const isEdited = !!editedScores[editKey];
+                        const displayScore = editedScores[editKey] || result.diem_so;
+
+                        return (
+                            <tr key={editKey} className={result.status === 'error' ? 'bg-red-900/20 hover:bg-red-900/40 transition-colors' : (isEdited ? 'bg-yellow-800/30 hover:bg-yellow-800/40 transition-colors' : 'hover:bg-indigo-900/20 transition-colors')}>
+                                <td className="px-4 py-3 min-w-[100px]">
+                                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${result.status === 'success' ? 'bg-green-700 text-green-100' : 'bg-red-700 text-red-100'}`}>
+                                        {result.status === 'success' ? 'Thành công' : 'Lỗi'}
+                                    </span>
+                                </td>
+                                
+                                <td className="px-4 py-3 text-sm text-gray-300 font-medium break-words min-w-[150px] max-w-[300px]">
+                                    {result.ten_hoc_sinh}
+                                </td>
+
+                                {hasCustomColumn && (
+                                    <td className="px-4 py-3 text-sm text-gray-400 break-words min-w-[100px] max-w-[200px]">
+                                        {result.custom_data || 'N/A'}
+                                    </td>
+                                )}
+
+                                <td className="px-4 py-2 text-sm font-bold text-gray-100 w-20">
+                                    {result.status === 'error' ? (
+                                        <span className="text-red-400 italic text-xs" title={result.errorMessage}>
+                                            {result.errorMessage || 'Lỗi chung'}
+                                        </span>
+                                    ) : (
+                                        <input
+                                            type="text"
+                                            value={displayScore}
+                                            onChange={(e) => onScoreChange(index, result.fileName, e.target.value)}
+                                            className="w-full text-center p-1 rounded bg-gray-900 border"
+                                            style={{ borderColor: isEdited ? '#fcd34d' : '#4b5563', color: isEdited ? '#fcd34d' : '#e5e7eb' }}
+                                        />
+                                    )}
+                                </td>
+                            </tr>
+                        );
+                    })}
+                </tbody>
+            </table>
+        </div>
+    );
+};
+
+
 // =======================================================
-// 6. MAIN APP COMPONENT
+// 4. MAIN APP COMPONENT
 // =======================================================
 
 export default function App() {
+    // --- States
     /** @type {[File[], React.Dispatch<React.SetStateAction<File[]>>]} */
     const [files, setFiles] = useState([]);
     /** @type {[ExtractionResult[], React.Dispatch<React.SetStateAction<ExtractionResult[]>>]} */
@@ -405,67 +393,49 @@ export default function App() {
     const [error, setError] = useState(null);
     const [dragActive, setDragActive] = useState(false);
     const [processingStatus, setProcessingStatus] = useState('');
-    const [accentColor, setAccentColor] = useState('#4f46e5'); // Indigo đậm mặc định (Deep Blue Theme)
-    const fileInputRef = useRef(null);
     
-    // Sắp xếp và Lọc
-    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'ascending' });
-    const [filterStatus, setFilterStatus] = useState('all'); // 'all', 'pass', 'fail'
-    
-    // IMAGE PREVIEW STATE
-    const [selectedImageFile, setSelectedImageFile] = useState(null); // Lưu trữ File object được chọn
-
-    // Logic Sắp xếp
-    const sortedResults = React.useMemo(() => {
-        let sortableItems = [...results];
-        // Sắp xếp
-        sortableItems.sort((a, b) => {
-            const isAError = a.status !== 'success';
-            const isBError = b.status !== 'success';
-
-            if (isAError && !isBError) return 1;
-            if (!isAError && isBError) return -1;
-            if (isAError && isBError) return 0; 
-
-            if (sortConfig.key !== null) {
-                let aValue = a[sortConfig.key];
-                let bValue = b[sortConfig.key];
-
-                if (sortConfig.key === 'diem_so') {
-                    aValue = parseFloat(aValue) || -1;
-                    bValue = parseFloat(bValue) || -1;
-                }
-                
-                if (aValue < bValue) {
-                    return sortConfig.direction === 'ascending' ? -1 : 1;
-                }
-                if (aValue > bValue) {
-                    return sortConfig.direction === 'ascending' ? 1 : -1;
-                }
-            }
-            return 0;
-        });
-        return sortableItems;
-    }, [results, sortConfig]);
-
-    const handleSort = (key) => {
-        let direction = 'ascending';
-        if (sortConfig.key === key && sortConfig.direction === 'ascending') {
-            direction = 'descending';
+    // --- States Tùy chỉnh (Sử dụng localStorage)
+    const getInitialConfig = (key, defaultValue) => {
+        try {
+            const saved = localStorage.getItem(key);
+            return saved !== null ? saved : defaultValue;
+        } catch (e) {
+            console.error("Lỗi khi đọc localStorage:", e);
+            return defaultValue;
         }
-        setSortConfig({ key, direction });
     };
 
+    const [accentColor, setAccentColorState] = useState(getInitialConfig('accentColor', '#4f46e5')); 
+    const [customColumns, setCustomColumnsState] = useState(getInitialConfig('customColumns', 'Mã học sinh')); 
+    
+    const setAccentColor = (newColor) => {
+        setAccentColorState(newColor);
+        try { localStorage.setItem('accentColor', newColor); } catch (e) {}
+    };
 
-    // NEW STATE: Lưu trữ API Key ở Runtime (Khởi tạo là null)
-    const [apiKey, setApiKey] = useState(null);
+    const setCustomColumns = (newCols) => {
+        setCustomColumnsState(newCols);
+        try { localStorage.setItem('customColumns', newCols); } catch (e) {}
+    };
+    
+    
+    const fileInputRef = useRef(null);
+    const [apiKey, setApiKey] = useState(null); // API Key từ State (an toàn)
+    const [filter, setFilter] = useState('all'); // 'all', 'pass', 'fail'
+    const [sortConfig, setSortConfig] = useState({ key: 'ten_hoc_sinh', direction: 'ascending' });
+    /** @type {[Object.<string, string>, React.Dispatch<React.SetStateAction<Object.<string, string>>>]} */
+    const [editedScores, setEditedScores] = useState({}); // { index_fileName: 'new_score' }
+    const [aiFeedback, setAiFeedback] = useState(null);
+    const [isAiFeedbackLoading, setIsAiFeedbackLoading] = useState(false);
 
-    // Sử dụng useEffect để khởi tạo API Key an toàn sau khi component đã render
+
+    // --- Hooks khởi tạo và Service Calls
+
+    // 1. Khởi tạo API Key an toàn
     useEffect(() => {
         let key = "";
-        
-        // 1. Cố gắng lấy key từ biến môi trường Netlify/Vite
         try {
+            // Cú pháp Netlify/Vite (Chỉ chạy sau khi build)
             if (typeof import.meta !== 'undefined' && import.meta.env) {
                 key = import.meta.env.VITE_GEMINI_API_KEY || "";
             }
@@ -473,39 +443,132 @@ export default function App() {
             // Bỏ qua lỗi cú pháp/tham chiếu nếu môi trường không hỗ trợ
         }
         
-        // 2. Kiểm tra biến an toàn của code editor (nếu tồn tại)
+        // Kiểm tra biến an toàn của code editor (nếu tồn tại)
         if (typeof __api_key !== 'undefined') {
             key = __api_key;
         }
 
         setApiKey(key);
-        
-        if (!key && !error) {
-             setError("API Key chưa được thiết lập. Vui lòng kiểm tra biến môi trường VITE_GEMINI_API_KEY trên Netlify.");
-        }
-    }, [error]);
+    }, []);
 
-    // Hàm gọi API Gemini (Sử dụng useCallback để đảm bảo hiệu suất)
+    // 2. Logic API Callback (Sử dụng API Key từ State)
     const extractDataFromImageCallback = useCallback(async (imageFile) => {
-        // Kiểm tra Key trước khi gọi API
+        // Lấy tên cột tùy chỉnh
+        const columns = customColumns.split(',').map(c => c.trim()).filter(c => c.length > 0);
+        const requiredColumns = ['Tên học sinh', 'Điểm số', ...columns];
+
         if (!apiKey) {
-            throw new Error("API Key chưa được thiết lập. Vui lòng kiểm tra biến môi trường.");
+            throw new Error("API Key chưa được thiết lập. (Lỗi Runtime)");
         }
-        return extractDataFromImage(imageFile, apiKey);
-    }, [apiKey]);
+        return extractDataFromImage(imageFile, apiKey, requiredColumns);
+    }, [apiKey, customColumns]);
+
+    // --- Logic Tóm tắt Hiệu suất & Sắp xếp (useMemo)
+
+    const processedResults = useMemo(() => {
+        // Áp dụng điểm đã chỉnh sửa
+        const resultsWithEdits = results.map((result, index) => {
+            const editKey = `${index}_${result.fileName}`;
+            // Ưu tiên điểm đã chỉnh sửa
+            const score = editedScores[editKey] !== undefined ? editedScores[editKey] : result.diem_so;
+            
+            // Chỉ tính điểm đã trích xuất thành công (không phải lỗi trích xuất ban đầu)
+            if (result.status === 'success' || score !== 'N/A') {
+                 return { ...result, diem_so: score };
+            }
+            return null; // Bỏ qua các hàng lỗi không thể sửa
+        }).filter(r => r !== null && r.diem_so !== 'N/A' && r.diem_so !== ''); 
+        // Lọc thêm: Loại bỏ các hàng có điểm rỗng (người dùng xóa điểm)
+
+        // Tính tóm tắt hiệu suất
+        const totalStudents = resultsWithEdits.length;
+        const totalScore = resultsWithEdits.reduce((sum, r) => sum + parseFloat(r.diem_so || 0), 0);
+        const averageScore = totalStudents > 0 ? (totalScore / totalStudents).toFixed(2) : 0;
+        const passCount = resultsWithEdits.filter(r => parseFloat(r.diem_so) >= 5.0).length;
+        const passRate = totalStudents > 0 ? (passCount / totalStudents * 100).toFixed(1) : 0;
+        const excellentCount = resultsWithEdits.filter(r => parseFloat(r.diem_so) >= 8.0).length;
+
+        const performanceSummary = {
+            totalStudents,
+            averageScore: parseFloat(averageScore),
+            passCount,
+            passRate: parseFloat(passRate),
+            excellentCount
+        };
+
+        // Áp dụng Lọc
+        const filtered = results.filter(r => {
+            if (r.status === 'error' && filter === 'all') return true; // Luôn giữ lỗi khi ở chế độ "Tất cả"
+            
+            // Lấy điểm đã chỉnh sửa hoặc điểm gốc
+            const score = parseFloat(editedScores[`${results.indexOf(r)}_${r.fileName}`] || r.diem_so || 0);
+
+            if (filter === 'pass') return r.status === 'success' && score >= 5.0;
+            if (filter === 'fail') return r.status === 'success' && score < 5.0;
+            
+            return true; // "all"
+        });
+
+        // Áp dụng Sắp xếp
+        const sorted = [...filtered].sort((a, b) => {
+            // Lấy điểm đã chỉnh sửa hoặc điểm gốc
+            const getScore = (result) => parseFloat(editedScores[`${results.indexOf(result)}_${result.fileName}`] || result.diem_so || -1);
+
+            const aValue = a[sortConfig.key] || getScore(a);
+            const bValue = b[sortConfig.key] || getScore(b);
+            
+            if (sortConfig.key === 'ten_hoc_sinh') {
+                if (aValue < bValue) return sortConfig.direction === 'ascending' ? -1 : 1;
+                if (aValue > bValue) return sortConfig.direction === 'ascending' ? 1 : -1;
+            } else if (sortConfig.key === 'diem_so') {
+                const aNum = getScore(a); 
+                const bNum = getScore(b); 
+                if (aNum < bNum) return sortConfig.direction === 'ascending' ? -1 : 1;
+                if (aNum > bNum) return sortConfig.direction === 'ascending' ? 1 : -1;
+            }
+            return 0;
+        });
+
+        return { sortedResults: sorted, performanceSummary, successfulResults: resultsWithEdits };
+
+    }, [results, filter, sortConfig, editedScores]);
+    
+    // 3. Effect để gọi AI Feedback sau khi xử lý xong (Lần gọi thứ 2)
+    useEffect(() => {
+        if (!isLoading && processedResults.successfulResults.length > 0) {
+            setIsAiFeedbackLoading(true);
+            getAiFeedback(apiKey, processedResults.successfulResults, processedResults.performanceSummary)
+                .then(setAiFeedback)
+                .catch(e => setAiFeedback(`Lỗi khi phân tích AI: ${e.message}`))
+                .finally(() => setIsAiFeedbackLoading(false));
+        } else if (results.length === 0) {
+            setAiFeedback(null);
+        }
+    }, [isLoading, processedResults.successfulResults.length, apiKey, processedResults.performanceSummary]);
 
 
-    // Hàm tải về CSV (ĐÃ SỬA LỖI DẤU CHẤM PHẨY)
+    // --- Handlers
+
+    // Hàm tải về CSV (ĐÃ SỬA LỖI ĐỊNH DẠNG CSV VÀ ÁP DỤNG CỘT TÙY CHỈNH)
     const downloadCSV = useCallback((finalResults) => {
         const successfulResults = finalResults.filter(r => r.status === 'success');
         if (successfulResults.length === 0) return;
 
-        // CHỈ BAO GỒM: Tên học sinh và Điểm số
-        // SỬ DỤNG DẤU CHẤM PHẨY (;) LÀM KÝ TỰ PHÂN TÁCH CHO EXCEL VIỆT NAM
-        const headers = ['"Tên học sinh"', '"Điểm số"'].join(';'); 
-        const rows = successfulResults.map(r =>
-            [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`].join(';') 
-        );
+        // Xử lý tiêu đề cột tùy chỉnh (chỉ tên cột, không bao gồm Tên học sinh và Điểm số)
+        const customColumnsHeader = customColumns.split(',').map(c => c.trim()).filter(c => c.length > 0);
+        const headers = ['"Tên học sinh"', '"Điểm số"', ...customColumnsHeader.map(h => `"${h}"`)].join(';'); // Sử dụng Dấu chấm phẩy (;)
+        
+        const rows = successfulResults.map(r => {
+            // Lấy điểm đã chỉnh sửa hoặc điểm gốc
+            const displayScore = r.diem_so; // Trong finalResults đã là điểm cuối cùng
+            
+            const fields = [`"${r.ten_hoc_sinh}"`, `"${displayScore}"`];
+            // Thêm dữ liệu tùy chỉnh (nếu có)
+            if (r.custom_data) {
+                fields.push(`"${r.custom_data}"`);
+            }
+            return fields.join(';');
+        });
 
         const csvContent = [headers, ...rows].join('\n');
         
@@ -520,15 +583,34 @@ export default function App() {
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
+    }, [customColumns]);
+
+    // Xử lý sự kiện chỉnh sửa điểm thủ công
+    const handleScoreChange = useCallback((index, fileName, newScore) => {
+        const editKey = `${index}_${fileName}`;
+        // Chỉ lưu trữ nếu giá trị là số hợp lệ hoặc là chuỗi rỗng
+        // Nếu người dùng nhập không phải số, hãy lưu trữ nó để có thể sửa lại sau, nhưng không tính vào thống kê.
+        setEditedScores(prev => ({ ...prev, [editKey]: newScore }));
+
     }, []);
+
+    // Xử lý sự kiện click tiêu đề bảng để sắp xếp
+    const handleSort = (key) => {
+        let direction = 'ascending';
+        if (sortConfig.key === key && sortConfig.direction === 'ascending') {
+            direction = 'descending';
+        }
+        setSortConfig({ key, direction });
+    };
 
     // Hàm xử lý chính (Auto-processing)
     const handleProcessFiles = useCallback(async (filesToProcess) => {
         if (filesToProcess.length === 0) return;
         setIsLoading(true);
         setResults([]);
+        setEditedScores({}); // Reset điểm đã chỉnh sửa
         setError(null);
-        setSortConfig({ key: null, direction: 'ascending' }); // Reset sắp xếp khi tải file mới
+        setAiFeedback(null);
         
         /** @type {ExtractionResult[]} */
         const newResults = [];
@@ -538,41 +620,28 @@ export default function App() {
             setProcessingStatus(`Đang xử lý file ${i + 1} of ${filesToProcess.length}: ${file.name}`);
             
             try {
-                // Gọi API để trích xuất dữ liệu
                 const extractedData = await extractDataFromImageCallback(file);
                 
                 if (Array.isArray(extractedData) && extractedData.length > 0) {
                     extractedData.forEach(data => {
                         newResults.push({
                             status: 'success',
-                            fileName: file.name, // Giữ lại trong object để tiện theo dõi
+                            fileName: file.name,
                             ten_hoc_sinh: data.ten_hoc_sinh || 'N/A',
-                            diem_so: data.diem_so || 'N/A'
+                            diem_so: data.diem_so || 'N/A',
+                            custom_data: data.custom_data || null,
                         });
                     });
                 } else {
-                    newResults.push({
-                        status: 'error',
-                        fileName: file.name,
-                        ten_hoc_sinh: 'N/A',
-                        diem_so: 'N/A',
-                        errorMessage: 'Không trích xuất được dữ liệu hợp lệ.'
-                    });
+                    newResults.push({ status: 'error', fileName: file.name, ten_hoc_sinh: 'N/A', diem_so: 'N/A', errorMessage: 'Không trích xuất được dữ liệu hợp lệ.' });
                 }
 
             } catch (err) {
                 const errorMessage = err instanceof Error ? err.message : 'Lỗi không xác định.';
-                // Cập nhật lỗi tổng quan nếu là lỗi API Key
                 if (errorMessage.includes("API Key chưa được thiết lập")) {
                     setError(errorMessage);
                 }
-                newResults.push({
-                    status: 'error',
-                    fileName: file.name,
-                    ten_hoc_sinh: 'N/A',
-                    diem_so: 'N/A',
-                    errorMessage: errorMessage
-                });
+                newResults.push({ status: 'error', fileName: file.name, ten_hoc_sinh: 'N/A', diem_so: 'N/A', errorMessage: errorMessage });
             }
         }
 
@@ -585,6 +654,7 @@ export default function App() {
         }
         
     }, [downloadCSV, extractDataFromImageCallback]);
+
 
     // Xử lý thay đổi tệp (TỰ ĐỘNG XỬ LÝ)
     const handleFileChange = (e) => {
@@ -599,7 +669,7 @@ export default function App() {
         }
     };
     
-    // Xử lý kéo thả (TỰ ĐỘNG XỬ LÝ)
+    // Xử lý kéo thả
     const handleDrop = (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -628,16 +698,10 @@ export default function App() {
     const onButtonClick = () => {
         fileInputRef.current?.click();
     };
-
-    // Hàm xử lý khi click vào hàng trong bảng
-    const handleRowClick = (fileName) => {
-        const fileObject = files.find(f => f.name === fileName);
-        if (fileObject) {
-            setSelectedImageFile(fileObject);
-        }
-    };
     
-    // Phần hiển thị TẢI/LỖI API KEY (React sẽ render an toàn)
+    // --- Render Logic (UI)
+
+    // Nếu API key đang trong quá trình tải hoặc bị thiếu, hiển thị thông báo
     if (apiKey === null) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-900 p-4">
@@ -666,15 +730,13 @@ export default function App() {
         );
     }
 
+    // Lấy tên cột tùy chỉnh để hiển thị trong bảng
+    const customColumnsDisplay = customColumns.split(',').map(c => c.trim()).filter(c => c.length > 0);
+    const hasCustomColumn = customColumnsDisplay.length > 0;
+
+
     return (
         <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8 bg-gray-900" onDragEnter={handleDrag}>
-            {/* Modal hiển thị ảnh */}
-            <ImageModal 
-                file={selectedImageFile} 
-                onClose={() => setSelectedImageFile(null)} 
-                accentColor={accentColor}
-            />
-
             {/* KHỐI CHỌN MÀU QUANG PHỔ */}
             <div className="absolute top-4 right-4 p-3 bg-gray-800 rounded-xl shadow-md flex items-center space-x-3 z-10 border border-gray-700">
                 <label htmlFor="colorPicker" className="text-sm font-semibold text-gray-400">Chọn Màu Nhấn:</label>
@@ -694,8 +756,28 @@ export default function App() {
                 >
                 <div className="text-center">
                     <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-gray-100" style={{ color: accentColor }}>Trích xuất điểm thi tự động (Gemini)</h1>
-                    <p className="mt-2 text-md text-gray-400">Tải ảnh các bài kiểm tra lên để trích xuất tên học sinh và điểm số. Kết quả sẽ tự động tải về file CSV.</p>
+                    <p className="mt-2 text-md text-gray-400">Ứng dụng đã được nâng cấp với khả năng phân tích và tùy chỉnh cột.</p>
                 </div>
+
+                {/* Phần Nhập cột Tùy chỉnh */}
+                <div className='mt-6 p-4 bg-gray-700/50 rounded-xl'>
+                    <label htmlFor="custom-columns" className='block text-sm font-medium text-gray-300 mb-2'>
+                        Cột Cần Trích Xuất Thêm (Ngoài Tên & Điểm):
+                    </label>
+                    <input
+                        id="custom-columns"
+                        type="text"
+                        placeholder='Ví dụ: Mã học sinh, Tên lớp (phân tách bằng dấu phẩy)'
+                        value={customColumns}
+                        onChange={(e) => setCustomColumns(e.target.value)}
+                        className='w-full p-3 rounded-lg bg-gray-900 text-gray-100 border border-gray-600 focus:ring-2 focus:ring-indigo-500'
+                        style={{ borderColor: accentColor }}
+                    />
+                    <p className='text-xs text-gray-500 mt-1'>
+                        Thao tác này sẽ cập nhật tiêu đề bảng và dữ liệu CSV (lưu tự động).
+                    </p>
+                </div>
+
 
                 <div className="mt-8">
                     <form id="form-file-upload" className="relative w-full" onDragEnter={handleDrag} onSubmit={(e) => e.preventDefault()}>
@@ -708,7 +790,7 @@ export default function App() {
                             className="hidden"
                             onChange={handleFileChange}
                         />
-                        {/* Hộp tải lên ĐÃ TỐI ƯU HÓA (chiều cao giảm, icon lớn hơn) */}
+                        {/* Hộp tải lên ĐÃ TỐI ƯU HÓA */}
                         <label id="label-file-upload" htmlFor="input-file-upload"
                             className={`h-32 border-2 rounded-xl border-dashed flex flex-col justify-center items-center cursor-pointer transition-all duration-300 hover:shadow-lg`}
                             style={{ borderColor: dragActive ? accentColor : `${accentColor}80`, backgroundColor: dragActive ? `${accentColor}10` : 'rgba(255, 255, 255, 0.05)' }}
@@ -735,29 +817,6 @@ export default function App() {
                     )}
                 </div>
 
-                {/* Phân tích hiệu suất */}
-                <PerformanceSummary results={sortedResults} accentColor={accentColor} />
-                
-                {/* Thanh Lọc */}
-                <div className="mt-4 flex flex-wrap gap-3 items-center justify-start text-sm">
-                    <span className="text-gray-400 font-semibold">Lọc kết quả:</span>
-                    {['all', 'pass', 'fail'].map(status => (
-                        <button
-                            key={status}
-                            onClick={() => setFilterStatus(status)}
-                            className={`px-4 py-1.5 rounded-full font-medium transition-all ${
-                                filterStatus === status 
-                                ? 'shadow-md text-white' 
-                                : 'text-gray-400 border border-gray-600 hover:bg-gray-700'
-                            }`}
-                            style={filterStatus === status ? { backgroundColor: accentColor } : {}}
-                        >
-                            {status === 'all' ? 'Tất cả' : status === 'pass' ? 'Đỗ ({'>'}= 5.0)' : 'Trượt ({'<'} 5.0)'}
-                        </button>
-                    ))}
-                </div>
-
-
                 {/* Trạng thái xử lý */}
                 <div className="mt-8 flex flex-col sm:flex-row justify-center items-center gap-4">
                     {isLoading && (
@@ -768,28 +827,48 @@ export default function App() {
                     )}
                 </div>
 
+                {/* Hiển thị Tổng hợp Hiệu suất nếu có dữ liệu */}
+                {processedResults.successfulResults.length > 0 && (
+                    <>
+                        <PerformanceSummary summary={processedResults.performanceSummary} accentColor={accentColor} />
+                        <AiFeedbackBox feedback={aiFeedback} accentColor={accentColor} isLoading={isAiFeedbackLoading} />
+                    </>
+                )}
+
                 {/* Thông báo lỗi nếu có */}
                 {error && <p className="mt-4 text-center text-red-400 font-medium p-3 bg-red-900/40 rounded-lg">{error}</p>}
                 
-                {/* Nút tải về CSV (chỉ hiển thị khi có kết quả thành công) */}
-                {results.some(r => r.status === 'success') && (
+                {/* Nút tải về CSV */}
+                {processedResults.successfulResults.length > 0 && (
                     <div className="mt-6 flex justify-center">
                         <button 
-                            onClick={() => downloadCSV(results)} 
+                            onClick={() => downloadCSV(processedResults.successfulResults)} 
                             className="flex items-center gap-2 rounded-xl px-6 py-3 text-white font-bold shadow-lg transition-all transform hover:scale-[1.03] active:scale-[0.98]"
                             style={{ backgroundColor: accentColor, color: 'white' }}
                         >
                             <CsvIcon className="w-5 h-5" />
-                            Tải về CSV ({results.filter(r => r.status === 'success').length} kết quả)
+                            Tải về CSV ({processedResults.successfulResults.length} kết quả)
                         </button>
                     </div>
                 )}
                 
-                <ResultsTable results={sortedResults} onSort={handleSort} sortConfig={sortConfig} filterStatus={filterStatus} onRowClick={handleRowClick} />
+                {/* Bảng Kết quả */}
+                {processedResults.sortedResults.length > 0 && (
+                    <ResultsTable
+                        results={processedResults.sortedResults}
+                        editedScores={editedScores}
+                        onScoreChange={handleScoreChange}
+                        onSort={handleSort}
+                        sortConfig={sortConfig}
+                        hasCustomColumn={hasCustomColumn}
+                        customColumnsDisplay={customColumnsDisplay}
+                    />
+                )}
             </main>
             <footer className="w-full max-w-4xl mx-auto text-center mt-6">
                 <p className="text-sm text-gray-500">Powered by Google Gemini</p>
             </footer>
+            {/* Modal Image Preview (Không cần thiết trong phiên bản này) */}
         </div>
     );
 }
