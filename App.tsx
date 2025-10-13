@@ -181,15 +181,18 @@ const ResultsTable = ({ results }) => {
                 <tbody className="bg-gray-800 divide-y divide-gray-700">
                     {results.map((result, index) => (
                         <tr key={index} className={result.status === 'error' ? 'bg-red-900/20 hover:bg-red-900/40 transition-colors' : 'hover:bg-indigo-900/20 transition-colors'}>
-                            <td className="px-4 py-3 whitespace-nowrap w-auto">
+                            {/* Ô Trạng thái */}
+                            <td className="px-4 py-3 align-top w-auto">
                                 <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${result.status === 'success' ? 'bg-green-700 text-green-100' : 'bg-red-700 text-red-100'}`}>
                                     {result.status === 'success' ? 'Thành công' : 'Lỗi'}
                                 </span>
                             </td>
-                            {/* Cột Tên Học sinh: Cho phép wrap text và chiếm không gian */}
-                            <td className="px-4 py-3 text-sm text-gray-300 font-medium w-full break-words">{result.ten_hoc_sinh}</td>
-                            {/* Cột Điểm số: Giữ cố định */}
-                            <td className="px-4 py-3 text-sm font-bold text-gray-100 whitespace-nowrap w-20 text-right">
+                            {/* Ô Tên Học sinh: NGẮT DÒNG VÀ CĂN CHỈNH CHIỀU CAO */}
+                            <td className="px-4 py-3 text-sm text-gray-300 font-medium w-full break-all">
+                                {result.ten_hoc_sinh}
+                            </td>
+                            {/* Ô Điểm số */}
+                            <td className="px-4 py-3 text-sm font-bold text-gray-100 w-20 text-right align-top">
                                 {result.status === 'success' ? result.diem_so : (
                                     <span className="text-red-400 italic text-xs" title={result.errorMessage}>
                                         {result.errorMessage || 'Lỗi chung'}
