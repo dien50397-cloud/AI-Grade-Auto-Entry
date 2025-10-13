@@ -22,7 +22,7 @@ import React, { useState, useCallback, useRef } from 'react';
  */
 
 // HÀM KIỂM TRA MÔI TRƯỜNG ĐỂ LẤY KHÓA API
-// Sửa lỗi: Đã gói logic kiểm tra import.meta vào một khối try/catch an toàn
+// Sử dụng hàm gọi tức thì an toàn (IIFE) để xử lý lỗi biên dịch cục bộ và vẫn truy cập đúng biến Netlify/Vite
 const getApiKey = (() => {
     // 1. Kiểm tra biến an toàn của môi trường code editor (nếu tồn tại)
     if (typeof __api_key !== 'undefined') {
