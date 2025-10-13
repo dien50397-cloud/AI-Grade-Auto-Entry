@@ -225,7 +225,6 @@ export default function App() {
         
         // 1. Cố gắng lấy key từ biến môi trường Netlify/Vite (Cú pháp này được xử lý trong quá trình build)
         try {
-            // Cần truy cập an toàn để tránh crash khi code editor không hỗ trợ import.meta
             if (typeof import.meta !== 'undefined' && import.meta.env) {
                 key = import.meta.env.VITE_GEMINI_API_KEY || "";
             }
@@ -241,7 +240,6 @@ export default function App() {
         setApiKey(key);
     }, []);
 
-
     // Hàm gọi API Gemini (Sử dụng useCallback để đảm bảo hiệu suất)
     const extractDataFromImageCallback = useCallback(async (imageFile) => {
         // Kiểm tra Key trước khi gọi API
@@ -252,15 +250,16 @@ export default function App() {
     }, [apiKey]);
 
 
-    // Hàm tải về CSV
+    // Hàm tải về CSV (ĐÃ SỬA LỖI ĐỊNH DẠNG CSV)
     const downloadCSV = useCallback((finalResults) => {
         const successfulResults = finalResults.filter(r => r.status === 'success');
         if (successfulResults.length === 0) return;
 
         // CHỈ BAO GỒM: Tên học sinh và Điểm số
-        const headers = ['"Tên học sinh"', '"Điểm số"'].join('\t'); 
+        // LỖI ĐÃ KHẮC PHỤC: Sử dụng dấu phẩy (comma) làm ký tự phân tách
+        const headers = ['"Tên học sinh"', '"Điểm số"'].join(','); 
         const rows = successfulResults.map(r =>
-            [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`].join('\t')
+            [`"${r.ten_hoc_sinh}"`, `"${r.diem_so}"`].join(',') 
         );
 
         const csvContent = [headers, ...rows].join('\n');
@@ -384,7 +383,7 @@ export default function App() {
         fileInputRef.current?.click();
     };
     
-    // Phần hiển thị TẢI/LỖI API KEY (React sẽ render an toàn)
+    // Nếu API key đang trong quá trình tải hoặc bị thiếu, hiển thị thông báo
     if (apiKey === null) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-900 p-4">
@@ -413,7 +412,6 @@ export default function App() {
         );
     }
 
-    // Phần hiển thị Ứng dụng chính (Chỉ chạy khi có API Key)
     return (
         <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8 bg-gray-900" onDragEnter={handleDrag}>
             {/* KHỐI CHỌN MÀU QUANG PHỔ */}
