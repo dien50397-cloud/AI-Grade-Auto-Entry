@@ -25,7 +25,7 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 
 // KHAI BÁO CÁC HẰNG SỐ CỦA DỊCH VỤ (KHÔNG BAO GỒM API KEY)
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
-const DEFAULT_CUSTOM_COLUMNS = ['Mã học sinh', 'Tên lớp']; // Cột mặc định cho checkbox
+const DEFAULT_CUSTOM_COLUMNS = ['Mã học sinh', 'Tên lớp', 'Chữ ký', 'Số báo danh']; // Cột mặc định cho checkbox
 
 /**
  * Hàm chuyển đổi tệp hình ảnh thành định dạng Base64
@@ -230,6 +230,12 @@ const InfoIcon = (props) => (
     </svg>
 );
 
+const ChevronDown = (props) => (
+    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-chevron-down">
+        <path d="m6 9 6 6 6-6"/>
+    </svg>
+);
+
 
 // =======================================================
 // 3. RESULTS TABLE COMPONENTS (Đã hợp nhất Logic)
@@ -300,7 +306,7 @@ const ResultsTable = ({ results, editedScores, onScoreChange, onSort, sortConfig
     // Thêm các cột tùy chỉnh vào header
     customColumnsDisplay.forEach((colName, index) => {
         headers.push({ 
-            key: `custom_data_${index}`, // Sử dụng index để truy cập
+            key: `custom_data_${colName}`, // Sử dụng tên cột gốc làm key
             label: colName,
             sortable: false 
         });
@@ -416,8 +422,10 @@ export default function App() {
     };
 
     const [accentColor, setAccentColorState] = useState(getInitialConfig('accentColor', '#4f46e5')); 
-    // State cho cột tùy chỉnh (Mã hóa: "Mã học sinh, Tên lớp")
+    // State cho cột tùy chỉnh (Mã hóa: "Cột 1, Cột 2")
     const [customColumnsString, setCustomColumnsString] = useState(getInitialConfig('customColumnsString', '')); 
+    // State quản lý trạng thái mở/đóng của khu vực chọn cột
+    const [isColumnPickerOpen, setIsColumnPickerOpen] = useState(false);
     
     // State cho các checkbox đã chọn
     const [selectedCheckboxes, setSelectedCheckboxes] = useState(() => {
@@ -469,7 +477,9 @@ export default function App() {
 
     // --- Logic Xử lý Cột Tùy chỉnh
     const customColumnsDisplay = useMemo(() => {
+        // Cột từ input tùy chỉnh
         const inputCols = customColumnsString.split(',').map(c => c.trim()).filter(c => c.length > 0 && !DEFAULT_CUSTOM_COLUMNS.includes(c));
+        // Cột từ checkbox
         const allCols = [...Array.from(selectedCheckboxes), ...inputCols];
         // Loại bỏ các cột trùng lặp và trả về mảng duy nhất
         return Array.from(new Set(allCols));
@@ -785,37 +795,54 @@ export default function App() {
                     <p className="mt-2 text-md text-gray-400">Ứng dụng đã được nâng cấp với khả năng phân tích và tùy chỉnh cột.</p>
                 </div>
 
-                {/* Phần Nhập cột Tùy chỉnh */}
+                {/* Phần Nhập cột Tùy chỉnh (DẠNG MỞ RỘNG MỚI) */}
                 <div className='mt-6 p-4 bg-gray-700/50 rounded-xl'>
-                    <label className='block text-sm font-medium text-gray-300 mb-2'>
-                        Cột Cần Trích Xuất Thêm (Ngoài Tên & Điểm):
-                    </label>
-                    <div className='flex flex-wrap gap-x-4 gap-y-2 mb-3'>
-                        {DEFAULT_CUSTOM_COLUMNS.map(col => (
-                            <label key={col} className="flex items-center text-gray-400 text-sm cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={selectedCheckboxes.has(col)}
-                                    onChange={(e) => handleCheckboxChange(col, e.target.checked)}
-                                    className="h-4 w-4 text-indigo-600 rounded border-gray-600 focus:ring-indigo-500 bg-gray-900"
-                                    style={{ accentColor: accentColor }}
-                                />
-                                <span className="ml-2">{col}</span>
-                            </label>
-                        ))}
-                    </div>
-                    <input
-                        id="custom-columns-input"
-                        type="text"
-                        placeholder='Các cột khác (phân tách bằng dấu phẩy): Ví dụ: Chữ ký, Số báo danh'
-                        value={customColumnsString}
-                        onChange={(e) => handleSetCustomColumnsString(e.target.value)}
-                        className='w-full p-3 rounded-lg bg-gray-900 text-gray-100 border border-gray-600 focus:ring-2 focus:ring-indigo-500'
+                    <button 
+                        onClick={() => setIsColumnPickerOpen(prev => !prev)}
+                        className='w-full flex justify-between items-center p-3 rounded-lg bg-gray-900 text-gray-100 border border-gray-600 hover:bg-gray-700/70 transition-colors'
                         style={{ borderColor: accentColor }}
-                    />
-                    <p className='text-xs text-gray-500 mt-1'>
-                        Thao tác này sẽ cập nhật tiêu đề bảng và dữ liệu CSV (lưu tự động).
-                    </p>
+                    >
+                        <span className='font-medium text-sm'>
+                            Cột Cần Trích Xuất (Đã chọn: {customColumnsDisplay.length} cột)
+                        </span>
+                        <ChevronDown className={`w-5 h-5 transition-transform ${isColumnPickerOpen ? 'rotate-180' : 'rotate-0'}`} style={{ color: accentColor }} />
+                    </button>
+                    
+                    <div className={`overflow-hidden transition-all duration-300 ${isColumnPickerOpen ? 'max-h-96 opacity-100 mt-3' : 'max-h-0 opacity-0'}`}>
+                        <div className="p-3 border border-gray-600 rounded-lg bg-gray-900 space-y-4">
+                            
+                            {/* Checkboxes Đề xuất */}
+                            <label className='block text-xs font-semibold text-gray-400 mb-2 border-b border-gray-700 pb-1'>Cột thường dùng:</label>
+                            <div className='flex flex-wrap gap-x-4 gap-y-2'>
+                                {DEFAULT_CUSTOM_COLUMNS.map(col => (
+                                    <label key={col} className="flex items-center text-gray-400 text-sm cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedCheckboxes.has(col)}
+                                            onChange={(e) => handleCheckboxChange(col, e.target.checked)}
+                                            className="h-4 w-4 text-indigo-600 rounded border-gray-600 focus:ring-indigo-500 bg-gray-700"
+                                            style={{ accentColor: accentColor }}
+                                        />
+                                        <span className="ml-2">{col}</span>
+                                    </label>
+                                ))}
+                            </div>
+
+                            {/* Input Tùy chỉnh */}
+                            <label htmlFor="custom-columns-input" className='block text-xs font-semibold text-gray-400 pt-3 mt-3 border-t border-gray-700'>
+                                Nhập cột khác (phân tách bằng dấu phẩy):
+                            </label>
+                            <input
+                                id="custom-columns-input"
+                                type="text"
+                                placeholder='Ví dụ: Chữ ký, Số báo danh'
+                                value={customColumnsString}
+                                onChange={(e) => handleSetCustomColumnsString(e.target.value)}
+                                className='w-full p-2 rounded-lg bg-gray-800 text-gray-100 border border-gray-600 focus:ring-2 focus:ring-indigo-500'
+                                style={{ borderColor: accentColor }}
+                            />
+                        </div>
+                    </div>
                 </div>
 
 
