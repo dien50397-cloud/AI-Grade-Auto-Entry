@@ -9,7 +9,7 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
  * @typedef {object} StudentScore
  * @property {string} ten_hoc_sinh
  * @property {string} diem_so
- * @property {string} [custom_data] Tên cột tùy chỉnh
+ * @property {Object.<string, string>} [custom_data] Dữ liệu cột tùy chỉnh
  */
 
 /**
@@ -19,7 +19,7 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
  * @property {string} fileName
  * @property {string} ten_hoc_sinh
  * @property {string} diem_so
- * @property {string} [custom_data]
+ * @property {Object.<string, string>} [custom_data]
  * @property {string} [errorMessage]
  */
 
@@ -41,11 +41,7 @@ const fileToGenerativePart = async (file) => {
 };
 
 /**
- * Hàm gọi API Gemini để trích xuất dữ liệu (Chấp nhận apiKey như một tham số)
- * @param {File} imageFile 
- * @param {string} apiKey - Phải được truyền từ React State
- * @param {string[]} requiredColumns - Các cột tùy chỉnh cần trích xuất
- * @returns {Promise<StudentScore[]>}
+ * Hàm gọi AI Gemini để trích xuất dữ liệu (Đã thêm Cột tùy chỉnh và Chuẩn hóa)
  */
 const extractDataFromImage = async (imageFile, apiKey, requiredColumns) => {
     if (!apiKey) {
@@ -55,33 +51,37 @@ const extractDataFromImage = async (imageFile, apiKey, requiredColumns) => {
     const model = 'gemini-2.5-flash-preview-05-20';
     const imagePart = await fileToGenerativePart(imageFile);
     
+    // Tạo danh sách cột cần trích xuất cho prompt
     const columnsStr = requiredColumns.join(', ');
 
-    // Prompt yêu cầu trích xuất cột tùy chỉnh
+    // Prompt yêu cầu trích xuất cột tùy chỉnh và Chuẩn hóa Tên/Điểm
     const prompt = `Bạn là một CHUYÊN GIA PHÂN TÍCH BÀI KIỂM TRA. Từ hình ảnh danh sách điểm, hãy trích xuất **TẤT CẢ** các cột sau: [${columnsStr}].
 
 YÊU CẦU:
 1. Trích xuất tất cả học sinh.
 2. Cột Tên học sinh phải được chuẩn hóa về định dạng Proper Case (Chữ cái đầu mỗi từ viết hoa, ví dụ: 'nguyẽn văn a' -> 'Nguyễn Văn A').
 3. Điểm số phải được chuẩn hóa về thang điểm 10.0 (nếu phát hiện thang điểm khác, hãy quy đổi về 10.0).
-4. Đảm bảo trả về chính xác các trường trong cấu trúc JSON, kể cả trường dữ liệu tùy chỉnh.`;
+4. Đảm bảo trả về chính xác các trường trong cấu trúc JSON.`;
 
     // Định nghĩa Schema dựa trên các cột tùy chỉnh
     const properties = {
         ten_hoc_sinh: { type: "STRING", description: "Họ tên đầy đủ của học sinh (đã chuẩn hóa)." },
         diem_so: { type: "STRING", description: "Điểm số cuối cùng đã chuẩn hóa về thang 10.0." }
     };
-
     const requiredFields = ['ten_hoc_sinh', 'diem_so'];
+    const customColKeys = {};
 
     // Thêm cột tùy chỉnh vào schema
     requiredColumns.forEach(col => {
-        if (col.toLowerCase() !== 'tên học sinh' && col.toLowerCase() !== 'điểm số') {
-            properties[`col_${col.replace(/\s/g, '_').toLowerCase()}`] = { 
+        const normalizedCol = col.trim().toLowerCase();
+        if (normalizedCol !== 'tên học sinh' && normalizedCol !== 'điểm số') {
+            const jsonKey = `col_${normalizedCol.replace(/\s/g, '_')}`;
+            properties[jsonKey] = { 
                 type: "STRING", 
                 description: `Dữ liệu trích xuất cho cột: ${col}` 
             };
-            requiredFields.push(`col_${col.replace(/\s/g, '_').toLowerCase()}`);
+            requiredFields.push(jsonKey);
+            customColKeys[jsonKey] = col.trim();
         }
     });
 
@@ -103,7 +103,7 @@ YÊU CẦU:
         },
     };
 
-    // Áp dụng tính năng Retry (Backoff) để xử lý lỗi mạng/throttling
+    // Áp dụng tính năng Retry (Backoff)
     const MAX_RETRIES = 3;
     let lastError = null;
 
@@ -128,13 +128,15 @@ YÊU CẦU:
                     throw new Error("Đầu ra JSON không phải là Mảng hợp lệ.");
                 }
 
-                // Chuyển đổi tên trường tùy chỉnh để khớp với cấu trúc trong React
+                // Chuẩn hóa tên trường tùy chỉnh để khớp với cấu trúc trong React
                 const standardizedData = parsedData.map(item => {
-                    const newItem = { ten_hoc_sinh: item.ten_hoc_sinh, diem_so: item.diem_so };
+                    const customData = {};
+                    const newItem = { ten_hoc_sinh: item.ten_hoc_sinh, diem_so: item.diem_so, custom_data: customData };
+                    
                     Object.keys(item).forEach(key => {
-                        if (key.startsWith('col_')) {
-                            // Lưu trữ dữ liệu cột tùy chỉnh trong trường custom_data
-                            newItem.custom_data = item[key];
+                        if (key.startsWith('col_') && customColKeys[key]) {
+                            // Lưu trữ dữ liệu cột tùy chỉnh trong Object custom_data
+                            customData[customColKeys[key]] = item[key];
                         }
                     });
                     return newItem;
@@ -272,7 +274,7 @@ const AiFeedbackBox = ({ feedback, accentColor, isLoading }) => {
                 Phân tích của AI
             </h3>
             {isLoading ? (
-                 <p className="text-sm text-gray-400 animate-pulse">AI đang phân tích dữ liệu...</p>
+                <p className="text-sm text-gray-400 animate-pulse">AI đang phân tích dữ liệu...</p>
             ) : (
                 <p className="text-sm text-gray-300">{feedback}</p>
             )}
@@ -284,21 +286,18 @@ const AiFeedbackBox = ({ feedback, accentColor, isLoading }) => {
 /**
  * Component hiển thị bảng kết quả (Bao gồm chức năng Chỉnh sửa Inline)
  */
-const ResultsTable = ({ results, editedScores, onScoreChange, onSort, sortConfig, hasCustomColumn, customColumnsDisplay }) => {
+const ResultsTable = ({ results, editedScores, onScoreChange, onSort, sortConfig, customColumnsDisplay }) => {
     
     // Tạo tiêu đề động cho bảng
     const headers = [
         { key: 'status', label: 'Trạng thái', sortable: false },
         { key: 'ten_hoc_sinh', label: 'Tên Học sinh', sortable: true },
     ];
-
-    if (hasCustomColumn) {
-        headers.push({ 
-            key: 'custom_data', 
-            label: customColumnsDisplay[0], // Hiện thị tên cột tùy chỉnh đầu tiên
-            sortable: false 
-        });
-    }
+    
+    // Thêm các cột tùy chỉnh vào header
+    customColumnsDisplay.forEach(colName => {
+        headers.push({ key: colName, label: colName, sortable: false });
+    });
 
     headers.push({ key: 'diem_so', label: 'Điểm số (Thang 10)', sortable: true });
 
@@ -348,11 +347,11 @@ const ResultsTable = ({ results, editedScores, onScoreChange, onSort, sortConfig
                                     {result.ten_hoc_sinh}
                                 </td>
 
-                                {hasCustomColumn && (
-                                    <td className="px-4 py-3 text-sm text-gray-400 break-words min-w-[100px] max-w-[200px]">
-                                        {result.custom_data || 'N/A'}
+                                {customColumnsDisplay.map((colName) => (
+                                    <td key={colName} className="px-4 py-3 text-sm text-gray-400 break-words min-w-[100px] max-w-[200px]">
+                                        {result.custom_data[colName] || 'N/A'}
                                     </td>
-                                )}
+                                ))}
 
                                 <td className="px-4 py-2 text-sm font-bold text-gray-100 w-20">
                                     {result.status === 'error' ? (
@@ -435,7 +434,7 @@ export default function App() {
     useEffect(() => {
         let key = "";
         try {
-            // Cú pháp Netlify/Vite (Chỉ chạy sau khi build)
+            // Cú pháp Netlify/Vite
             if (typeof import.meta !== 'undefined' && import.meta.env) {
                 key = import.meta.env.VITE_GEMINI_API_KEY || "";
             }
@@ -474,7 +473,8 @@ export default function App() {
             
             // Chỉ tính điểm đã trích xuất thành công (không phải lỗi trích xuất ban đầu)
             if (result.status === 'success' || score !== 'N/A') {
-                 return { ...result, diem_so: score };
+                // Đảm bảo custom_data cũng có mặt
+                 return { ...result, diem_so: score, custom_data: result.custom_data || {} };
             }
             return null; // Bỏ qua các hàng lỗi không thể sửa
         }).filter(r => r !== null && r.diem_so !== 'N/A' && r.diem_so !== ''); 
@@ -514,13 +514,15 @@ export default function App() {
             // Lấy điểm đã chỉnh sửa hoặc điểm gốc
             const getScore = (result) => parseFloat(editedScores[`${results.indexOf(result)}_${result.fileName}`] || result.diem_so || -1);
 
-            const aValue = a[sortConfig.key] || getScore(a);
-            const bValue = b[sortConfig.key] || getScore(b);
+            const aValue = a[sortConfig.key];
+            const bValue = b[sortConfig.key];
             
             if (sortConfig.key === 'ten_hoc_sinh') {
+                // Sắp xếp chuỗi (tên học sinh)
                 if (aValue < bValue) return sortConfig.direction === 'ascending' ? -1 : 1;
                 if (aValue > bValue) return sortConfig.direction === 'ascending' ? 1 : -1;
             } else if (sortConfig.key === 'diem_so') {
+                // Sắp xếp số (điểm số)
                 const aNum = getScore(a); 
                 const bNum = getScore(b); 
                 if (aNum < bNum) return sortConfig.direction === 'ascending' ? -1 : 1;
@@ -554,19 +556,22 @@ export default function App() {
         const successfulResults = finalResults.filter(r => r.status === 'success');
         if (successfulResults.length === 0) return;
 
-        // Xử lý tiêu đề cột tùy chỉnh (chỉ tên cột, không bao gồm Tên học sinh và Điểm số)
+        // Lấy tên cột tùy chỉnh để hiển thị trong header
         const customColumnsHeader = customColumns.split(',').map(c => c.trim()).filter(c => c.length > 0);
         const headers = ['"Tên học sinh"', '"Điểm số"', ...customColumnsHeader.map(h => `"${h}"`)].join(';'); // Sử dụng Dấu chấm phẩy (;)
         
         const rows = successfulResults.map(r => {
             // Lấy điểm đã chỉnh sửa hoặc điểm gốc
-            const displayScore = r.diem_so; // Trong finalResults đã là điểm cuối cùng
+            const displayScore = r.diem_so; 
             
             const fields = [`"${r.ten_hoc_sinh}"`, `"${displayScore}"`];
+            
             // Thêm dữ liệu tùy chỉnh (nếu có)
-            if (r.custom_data) {
-                fields.push(`"${r.custom_data}"`);
-            }
+            customColumnsHeader.forEach(colName => {
+                const data = r.custom_data?.[colName] || "";
+                fields.push(`"${data}"`);
+            });
+
             return fields.join(';');
         });
 
@@ -588,8 +593,6 @@ export default function App() {
     // Xử lý sự kiện chỉnh sửa điểm thủ công
     const handleScoreChange = useCallback((index, fileName, newScore) => {
         const editKey = `${index}_${fileName}`;
-        // Chỉ lưu trữ nếu giá trị là số hợp lệ hoặc là chuỗi rỗng
-        // Nếu người dùng nhập không phải số, hãy lưu trữ nó để có thể sửa lại sau, nhưng không tính vào thống kê.
         setEditedScores(prev => ({ ...prev, [editKey]: newScore }));
 
     }, []);
@@ -629,7 +632,7 @@ export default function App() {
                             fileName: file.name,
                             ten_hoc_sinh: data.ten_hoc_sinh || 'N/A',
                             diem_so: data.diem_so || 'N/A',
-                            custom_data: data.custom_data || null,
+                            custom_data: data.custom_data || {},
                         });
                     });
                 } else {
@@ -650,10 +653,11 @@ export default function App() {
         setProcessingStatus('');
         
         if (newResults.some(r => r.status === 'success')) {
-            downloadCSV(newResults);
+            // Download CSV sử dụng processedResults.successfulResults
+            // Nhưng cần chờ useMemo xử lý xong nên sẽ kích hoạt sau
         }
         
-    }, [downloadCSV, extractDataFromImageCallback]);
+    }, [extractDataFromImageCallback]);
 
 
     // Xử lý thay đổi tệp (TỰ ĐỘNG XỬ LÝ)
@@ -699,6 +703,10 @@ export default function App() {
         fileInputRef.current?.click();
     };
     
+    // Lấy tên cột tùy chỉnh để hiển thị trong bảng
+    const customColumnsDisplay = customColumns.split(',').map(c => c.trim()).filter(c => c.length > 0);
+    const hasCustomColumn = customColumnsDisplay.length > 0;
+    
     // --- Render Logic (UI)
 
     // Nếu API key đang trong quá trình tải hoặc bị thiếu, hiển thị thông báo
@@ -729,11 +737,6 @@ export default function App() {
             </div>
         );
     }
-
-    // Lấy tên cột tùy chỉnh để hiển thị trong bảng
-    const customColumnsDisplay = customColumns.split(',').map(c => c.trim()).filter(c => c.length > 0);
-    const hasCustomColumn = customColumnsDisplay.length > 0;
-
 
     return (
         <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8 bg-gray-900" onDragEnter={handleDrag}>
@@ -860,7 +863,6 @@ export default function App() {
                         onScoreChange={handleScoreChange}
                         onSort={handleSort}
                         sortConfig={sortConfig}
-                        hasCustomColumn={hasCustomColumn}
                         customColumnsDisplay={customColumnsDisplay}
                     />
                 )}
