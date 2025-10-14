@@ -43,17 +43,17 @@ const getApiKeyFromEnv = () => {
 };
 
 // Khai báo các instance Firebase ở scope ngoài (sẽ được khởi tạo trong useEffect)
-// CHÚ Ý: Chúng ta đang sử dụng các hàm Firebase từ scope global (giả định đã được tải qua script tag hoặc môi trường cung cấp).
+// CHÚ Ý: Mã này giả định các hàm Firebase (initializeApp, getAuth,...) được cung cấp ở scope global.
 let app, db, auth;
 let isFirebaseInitialized = false;
 
 // --- LOGIC KHỞI TẠO VÀ LƯU TRỮ (SỬ DỤNG HÀM GLOBAL) ---
 
 const initializeFirebase = () => {
-    // KHÔNG SỬ DỤNG import { initializeApp, getAuth, ... }
     if (isFirebaseInitialized) return;
     try {
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        // Kiểm tra xem các hàm Firebase có tồn tại trong phạm vi toàn cục không
         if (firebaseConfig && typeof initializeApp === 'function') {
             app = initializeApp(firebaseConfig);
             db = getFirestore(app);
@@ -92,7 +92,10 @@ const saveResultToFirestore = async (userId, data) => {
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
     
     try {
+        // Lưu dữ liệu vào collection bảo mật của người dùng
         const resultsCollection = collection(db, `artifacts/${appId}/users/${userId}/results`);
+        
+        // Ghi đè lên document cũ nếu cần, hoặc tạo document mới. Ở đây tạo mới mỗi lần xử lý.
         await addDoc(resultsCollection, {
             timestamp: Date.now(),
             results: data,
@@ -215,7 +218,13 @@ YÊU CẦU:
             const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify({
+                    contents: [{ parts: [imagePart, { text: prompt }] }],
+                    generationConfig: {
+                        responseMimeType: "application/json",
+                        responseSchema: responseSchema,
+                    },
+                })
             });
 
             if (response.ok) {
@@ -292,7 +301,7 @@ const SpinnerIcon = (props) => (
 
 const CsvIcon = (props) => (
     <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-file-text">
-        <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v4a2 2 0 0 0 2 2h4" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" />
+        <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v4a2 2 0 in 0 2 2h4" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" />
     </svg>
 );
 
@@ -614,7 +623,8 @@ export default function App() {
     const processedResults = useMemo(() => {
         // Áp dụng điểm đã chỉnh sửa
         const resultsWithEdits = results.map((result, index) => {
-            const editKey = `${results.indexOf(result)}_${result.fileName}`; // Sử dụng results.indexOf(result) là sai nếu kết quả bị lọc/sắp xếp. Cần fix.
+            // Cần tìm key chỉnh sửa dựa trên dữ liệu hiện tại
+            const editKey = `${results.indexOf(result)}_${result.fileName}`; 
             const score = editedScores[editKey] !== undefined ? editedScores[editKey] : result.diem_so;
             
             if (result.status === 'success' || score !== 'N/A') {
@@ -731,10 +741,14 @@ export default function App() {
 
     // Xử lý sự kiện chỉnh sửa điểm thủ công
     const handleScoreChange = useCallback((index, fileName, newScore) => {
-        const editKey = `${index}_${fileName}`;
+        // Cần tìm index của hàng trong *danh sách results gốc*
+        const originalIndex = results.findIndex(r => results.indexOf(r) === index && r.fileName === fileName);
+        if (originalIndex === -1) return;
+        
+        const editKey = `${originalIndex}_${fileName}`;
         setEditedScores(prev => ({ ...prev, [editKey]: newScore }));
 
-    }, []);
+    }, [results]);
 
     // Xử lý sự kiện click tiêu đề bảng để sắp xếp
     const handleSort = (key) => {
@@ -749,7 +763,7 @@ export default function App() {
     const handleProcessFiles = useCallback(async (filesToProcess) => {
         if (filesToProcess.length === 0) return;
         setIsLoading(true);
-        // Không reset results/editedScores để có thể cộng dồn vào dữ liệu đã lưu
+        // KHÔNG RESET results để giữ lại dữ liệu Firestore đã tải.
         setEditedScores({}); 
         setError(null);
         setAiFeedback(null);
@@ -809,7 +823,6 @@ export default function App() {
         if (e.target.files) {
             const newFiles = Array.from(e.target.files);
             setFiles(newFiles);
-            // setResults([]); // KHÔNG RESET để giữ lại dữ liệu Firestore
             setError(null);
             if (newFiles.length > 0) {
                 handleProcessFiles(newFiles);
