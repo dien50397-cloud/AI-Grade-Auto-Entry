@@ -9,7 +9,7 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
  * @typedef {object} StudentScore
  * @property {string} ten_hoc_sinh
  * @property {string} diem_so
- * @property {Object.<string, string>} [custom_data] Dữ liệu cột tùy chỉnh
+ * @property {Object.<string, string>} custom_data - Dữ liệu các cột tùy chỉnh
  */
 
 /**
@@ -19,12 +19,13 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
  * @property {string} fileName
  * @property {string} ten_hoc_sinh
  * @property {string} diem_so
- * @property {Object.<string, string>} [custom_data]
+ * @property {Object.<string, string>} custom_data
  * @property {string} [errorMessage]
  */
 
 // KHAI BÁO CÁC HẰNG SỐ CỦA DỊCH VỤ (KHÔNG BAO GỒM API KEY)
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
+const DEFAULT_CUSTOM_COLUMNS = ['Mã học sinh', 'Tên lớp']; // Cột mặc định cho checkbox
 
 /**
  * Hàm chuyển đổi tệp hình ảnh thành định dạng Base64
@@ -41,7 +42,11 @@ const fileToGenerativePart = async (file) => {
 };
 
 /**
- * Hàm gọi AI Gemini để trích xuất dữ liệu (Đã thêm Cột tùy chỉnh và Chuẩn hóa)
+ * Hàm gọi API Gemini để trích xuất dữ liệu (Chấp nhận apiKey như một tham số)
+ * @param {File} imageFile 
+ * @param {string} apiKey - Phải được truyền từ React State
+ * @param {string[]} requiredColumns - Các cột tùy chỉnh cần trích xuất
+ * @returns {Promise<StudentScore[]>}
  */
 const extractDataFromImage = async (imageFile, apiKey, requiredColumns) => {
     if (!apiKey) {
@@ -51,16 +56,15 @@ const extractDataFromImage = async (imageFile, apiKey, requiredColumns) => {
     const model = 'gemini-2.5-flash-preview-05-20';
     const imagePart = await fileToGenerativePart(imageFile);
     
-    // Tạo danh sách cột cần trích xuất cho prompt
     const columnsStr = requiredColumns.join(', ');
 
-    // Prompt yêu cầu trích xuất cột tùy chỉnh và Chuẩn hóa Tên/Điểm
+    // Prompt yêu cầu trích xuất cột tùy chỉnh, chuẩn hóa tên và điểm
     const prompt = `Bạn là một CHUYÊN GIA PHÂN TÍCH BÀI KIỂM TRA. Từ hình ảnh danh sách điểm, hãy trích xuất **TẤT CẢ** các cột sau: [${columnsStr}].
 
 YÊU CẦU:
 1. Trích xuất tất cả học sinh.
-2. Cột Tên học sinh phải được chuẩn hóa về định dạng Proper Case (Chữ cái đầu mỗi từ viết hoa, ví dụ: 'nguyẽn văn a' -> 'Nguyễn Văn A').
-3. Điểm số phải được chuẩn hóa về thang điểm 10.0 (nếu phát hiện thang điểm khác, hãy quy đổi về 10.0).
+2. Cột Tên học sinh phải được chuẩn hóa về định dạng Proper Case (Ví dụ: 'nguyẽn văn a' -> 'Nguyễn Văn A').
+3. Điểm số (nếu có) phải được chuẩn hóa về thang điểm 10.0 (nếu phát hiện thang điểm khác, hãy quy đổi về 10.0).
 4. Đảm bảo trả về chính xác các trường trong cấu trúc JSON.`;
 
     // Định nghĩa Schema dựa trên các cột tùy chỉnh
@@ -68,20 +72,18 @@ YÊU CẦU:
         ten_hoc_sinh: { type: "STRING", description: "Họ tên đầy đủ của học sinh (đã chuẩn hóa)." },
         diem_so: { type: "STRING", description: "Điểm số cuối cùng đã chuẩn hóa về thang 10.0." }
     };
+
     const requiredFields = ['ten_hoc_sinh', 'diem_so'];
-    const customColKeys = {};
 
     // Thêm cột tùy chỉnh vào schema
     requiredColumns.forEach(col => {
-        const normalizedCol = col.trim().toLowerCase();
-        if (normalizedCol !== 'tên học sinh' && normalizedCol !== 'điểm số') {
-            const jsonKey = `col_${normalizedCol.replace(/\s/g, '_')}`;
-            properties[jsonKey] = { 
+        const standardizedKey = `col_${col.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase()}`;
+        if (col.toLowerCase() !== 'tên học sinh' && col.toLowerCase() !== 'điểm số') {
+            properties[standardizedKey] = { 
                 type: "STRING", 
                 description: `Dữ liệu trích xuất cho cột: ${col}` 
             };
-            requiredFields.push(jsonKey);
-            customColKeys[jsonKey] = col.trim();
+            requiredFields.push(standardizedKey);
         }
     });
 
@@ -103,7 +105,7 @@ YÊU CẦU:
         },
     };
 
-    // Áp dụng tính năng Retry (Backoff)
+    // Áp dụng tính năng Retry (Backoff) để xử lý lỗi mạng/throttling
     const MAX_RETRIES = 3;
     let lastError = null;
 
@@ -128,15 +130,16 @@ YÊU CẦU:
                     throw new Error("Đầu ra JSON không phải là Mảng hợp lệ.");
                 }
 
-                // Chuẩn hóa tên trường tùy chỉnh để khớp với cấu trúc trong React
+                // Chuyển đổi tên trường tùy chỉnh để khớp với cấu trúc trong React
                 const standardizedData = parsedData.map(item => {
-                    const customData = {};
-                    const newItem = { ten_hoc_sinh: item.ten_hoc_sinh, diem_so: item.diem_so, custom_data: customData };
-                    
+                    const newItem = { ten_hoc_sinh: item.ten_hoc_sinh, diem_so: item.diem_so, custom_data: {} };
                     Object.keys(item).forEach(key => {
-                        if (key.startsWith('col_') && customColKeys[key]) {
-                            // Lưu trữ dữ liệu cột tùy chỉnh trong Object custom_data
-                            customData[customColKeys[key]] = item[key];
+                        if (key.startsWith('col_')) {
+                            // Lưu trữ tất cả dữ liệu cột tùy chỉnh trong đối tượng custom_data
+                            const originalColName = requiredColumns.find(col => `col_${col.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase()}` === key);
+                            if (originalColName) {
+                                newItem.custom_data[originalColName] = item[key];
+                            }
                         }
                     });
                     return newItem;
@@ -293,10 +296,14 @@ const ResultsTable = ({ results, editedScores, onScoreChange, onSort, sortConfig
         { key: 'status', label: 'Trạng thái', sortable: false },
         { key: 'ten_hoc_sinh', label: 'Tên Học sinh', sortable: true },
     ];
-    
+
     // Thêm các cột tùy chỉnh vào header
-    customColumnsDisplay.forEach(colName => {
-        headers.push({ key: colName, label: colName, sortable: false });
+    customColumnsDisplay.forEach((colName, index) => {
+        headers.push({ 
+            key: `custom_data_${index}`, // Sử dụng index để truy cập
+            label: colName,
+            sortable: false 
+        });
     });
 
     headers.push({ key: 'diem_so', label: 'Điểm số (Thang 10)', sortable: true });
@@ -347,8 +354,8 @@ const ResultsTable = ({ results, editedScores, onScoreChange, onSort, sortConfig
                                     {result.ten_hoc_sinh}
                                 </td>
 
-                                {customColumnsDisplay.map((colName) => (
-                                    <td key={colName} className="px-4 py-3 text-sm text-gray-400 break-words min-w-[100px] max-w-[200px]">
+                                {customColumnsDisplay.map((colName, colIndex) => (
+                                    <td key={colIndex} className="px-4 py-3 text-sm text-gray-400 break-words min-w-[100px] max-w-[200px]">
                                         {result.custom_data[colName] || 'N/A'}
                                     </td>
                                 ))}
@@ -397,6 +404,10 @@ export default function App() {
     const getInitialConfig = (key, defaultValue) => {
         try {
             const saved = localStorage.getItem(key);
+            // THAY ĐỔI: Phân tích JSON cho mảng/Set nếu cần
+            if (key === 'selectedCheckboxes' && saved) {
+                return new Set(JSON.parse(saved));
+            }
             return saved !== null ? saved : defaultValue;
         } catch (e) {
             console.error("Lỗi khi đọc localStorage:", e);
@@ -405,16 +416,44 @@ export default function App() {
     };
 
     const [accentColor, setAccentColorState] = useState(getInitialConfig('accentColor', '#4f46e5')); 
-    const [customColumns, setCustomColumnsState] = useState(getInitialConfig('customColumns', 'Mã học sinh')); 
+    // State cho cột tùy chỉnh (Mã hóa: "Mã học sinh, Tên lớp")
+    const [customColumnsString, setCustomColumnsString] = useState(getInitialConfig('customColumnsString', '')); 
     
+    // State cho các checkbox đã chọn
+    const [selectedCheckboxes, setSelectedCheckboxes] = useState(() => {
+        const initialSet = getInitialConfig('selectedCheckboxes', new Set());
+        // Đảm bảo các cột mặc định luôn được kiểm tra nếu có trong Set
+        if (initialSet instanceof Set) {
+            return initialSet;
+        }
+        return new Set();
+    });
+
     const setAccentColor = (newColor) => {
         setAccentColorState(newColor);
         try { localStorage.setItem('accentColor', newColor); } catch (e) {}
     };
 
-    const setCustomColumns = (newCols) => {
-        setCustomColumnsState(newCols);
-        try { localStorage.setItem('customColumns', newCols); } catch (e) {}
+    const handleSetCustomColumnsString = (newCols) => {
+        setCustomColumnsString(newCols);
+        try { localStorage.setItem('customColumnsString', newCols); } catch (e) {}
+    };
+
+    // Hàm cập nhật Checkbox (và lưu vào localStorage)
+    const handleCheckboxChange = (colName, isChecked) => {
+        setSelectedCheckboxes(prev => {
+            const newSet = new Set(prev);
+            if (isChecked) {
+                newSet.add(colName);
+            } else {
+                newSet.delete(colName);
+            }
+            
+            // Lưu Set vào localStorage
+            try { localStorage.setItem('selectedCheckboxes', JSON.stringify(Array.from(newSet))); } catch (e) {}
+
+            return newSet;
+        });
     };
     
     
@@ -428,21 +467,23 @@ export default function App() {
     const [isAiFeedbackLoading, setIsAiFeedbackLoading] = useState(false);
 
 
-    // --- Hooks khởi tạo và Service Calls
+    // --- Logic Xử lý Cột Tùy chỉnh
+    const customColumnsDisplay = useMemo(() => {
+        const inputCols = customColumnsString.split(',').map(c => c.trim()).filter(c => c.length > 0 && !DEFAULT_CUSTOM_COLUMNS.includes(c));
+        const allCols = [...Array.from(selectedCheckboxes), ...inputCols];
+        // Loại bỏ các cột trùng lặp và trả về mảng duy nhất
+        return Array.from(new Set(allCols));
+    }, [customColumnsString, selectedCheckboxes]);
 
     // 1. Khởi tạo API Key an toàn
     useEffect(() => {
         let key = "";
         try {
-            // Cú pháp Netlify/Vite
             if (typeof import.meta !== 'undefined' && import.meta.env) {
                 key = import.meta.env.VITE_GEMINI_API_KEY || "";
             }
-        } catch (e) {
-            // Bỏ qua lỗi cú pháp/tham chiếu nếu môi trường không hỗ trợ
-        }
+        } catch (e) {}
         
-        // Kiểm tra biến an toàn của code editor (nếu tồn tại)
         if (typeof __api_key !== 'undefined') {
             key = __api_key;
         }
@@ -453,32 +494,27 @@ export default function App() {
     // 2. Logic API Callback (Sử dụng API Key từ State)
     const extractDataFromImageCallback = useCallback(async (imageFile) => {
         // Lấy tên cột tùy chỉnh
-        const columns = customColumns.split(',').map(c => c.trim()).filter(c => c.length > 0);
-        const requiredColumns = ['Tên học sinh', 'Điểm số', ...columns];
+        const requiredColumns = ['Tên học sinh', 'Điểm số', ...customColumnsDisplay];
 
         if (!apiKey) {
             throw new Error("API Key chưa được thiết lập. (Lỗi Runtime)");
         }
         return extractDataFromImage(imageFile, apiKey, requiredColumns);
-    }, [apiKey, customColumns]);
+    }, [apiKey, customColumnsDisplay]);
 
-    // --- Logic Tóm tắt Hiệu suất & Sắp xếp (useMemo)
+    // 3. Logic Tóm tắt Hiệu suất & Sắp xếp (useMemo)
 
     const processedResults = useMemo(() => {
         // Áp dụng điểm đã chỉnh sửa
         const resultsWithEdits = results.map((result, index) => {
             const editKey = `${index}_${result.fileName}`;
-            // Ưu tiên điểm đã chỉnh sửa
             const score = editedScores[editKey] !== undefined ? editedScores[editKey] : result.diem_so;
             
-            // Chỉ tính điểm đã trích xuất thành công (không phải lỗi trích xuất ban đầu)
             if (result.status === 'success' || score !== 'N/A') {
-                // Đảm bảo custom_data cũng có mặt
-                 return { ...result, diem_so: score, custom_data: result.custom_data || {} };
+                return { ...result, diem_so: score };
             }
-            return null; // Bỏ qua các hàng lỗi không thể sửa
+            return null;
         }).filter(r => r !== null && r.diem_so !== 'N/A' && r.diem_so !== ''); 
-        // Lọc thêm: Loại bỏ các hàng có điểm rỗng (người dùng xóa điểm)
 
         // Tính tóm tắt hiệu suất
         const totalStudents = resultsWithEdits.length;
@@ -498,9 +534,8 @@ export default function App() {
 
         // Áp dụng Lọc
         const filtered = results.filter(r => {
-            if (r.status === 'error' && filter === 'all') return true; // Luôn giữ lỗi khi ở chế độ "Tất cả"
+            if (r.status === 'error' && filter === 'all') return true; 
             
-            // Lấy điểm đã chỉnh sửa hoặc điểm gốc
             const score = parseFloat(editedScores[`${results.indexOf(r)}_${r.fileName}`] || r.diem_so || 0);
 
             if (filter === 'pass') return r.status === 'success' && score >= 5.0;
@@ -511,18 +546,14 @@ export default function App() {
 
         // Áp dụng Sắp xếp
         const sorted = [...filtered].sort((a, b) => {
-            // Lấy điểm đã chỉnh sửa hoặc điểm gốc
             const getScore = (result) => parseFloat(editedScores[`${results.indexOf(result)}_${result.fileName}`] || result.diem_so || -1);
-
-            const aValue = a[sortConfig.key];
-            const bValue = b[sortConfig.key];
+            const aValue = a[sortConfig.key] || getScore(a);
+            const bValue = b[sortConfig.key] || getScore(b);
             
             if (sortConfig.key === 'ten_hoc_sinh') {
-                // Sắp xếp chuỗi (tên học sinh)
                 if (aValue < bValue) return sortConfig.direction === 'ascending' ? -1 : 1;
                 if (aValue > bValue) return sortConfig.direction === 'ascending' ? 1 : -1;
             } else if (sortConfig.key === 'diem_so') {
-                // Sắp xếp số (điểm số)
                 const aNum = getScore(a); 
                 const bNum = getScore(b); 
                 if (aNum < bNum) return sortConfig.direction === 'ascending' ? -1 : 1;
@@ -533,9 +564,9 @@ export default function App() {
 
         return { sortedResults: sorted, performanceSummary, successfulResults: resultsWithEdits };
 
-    }, [results, filter, sortConfig, editedScores]);
+    }, [results, filter, sortConfig, editedScores, customColumnsDisplay]);
     
-    // 3. Effect để gọi AI Feedback sau khi xử lý xong (Lần gọi thứ 2)
+    // 4. Effect để gọi AI Feedback sau khi xử lý xong (Lần gọi thứ 2)
     useEffect(() => {
         if (!isLoading && processedResults.successfulResults.length > 0) {
             setIsAiFeedbackLoading(true);
@@ -551,25 +582,22 @@ export default function App() {
 
     // --- Handlers
 
-    // Hàm tải về CSV (ĐÃ SỬA LỖI ĐỊNH DẠNG CSV VÀ ÁP DỤNG CỘT TÙY CHỈNH)
+    // Hàm tải về CSV (ĐÃ SỬA LỖI ĐỊNH DẠNG CSV VÀ ÁP DỤNG ĐA CỘT TÙY CHỈNH)
     const downloadCSV = useCallback((finalResults) => {
         const successfulResults = finalResults.filter(r => r.status === 'success');
         if (successfulResults.length === 0) return;
 
-        // Lấy tên cột tùy chỉnh để hiển thị trong header
-        const customColumnsHeader = customColumns.split(',').map(c => c.trim()).filter(c => c.length > 0);
+        // Xử lý tiêu đề cột tùy chỉnh
+        const customColumnsHeader = customColumnsDisplay;
         const headers = ['"Tên học sinh"', '"Điểm số"', ...customColumnsHeader.map(h => `"${h}"`)].join(';'); // Sử dụng Dấu chấm phẩy (;)
         
         const rows = successfulResults.map(r => {
-            // Lấy điểm đã chỉnh sửa hoặc điểm gốc
             const displayScore = r.diem_so; 
             
             const fields = [`"${r.ten_hoc_sinh}"`, `"${displayScore}"`];
-            
-            // Thêm dữ liệu tùy chỉnh (nếu có)
-            customColumnsHeader.forEach(colName => {
-                const data = r.custom_data?.[colName] || "";
-                fields.push(`"${data}"`);
+            // Thêm dữ liệu tùy chỉnh (ĐÃ HỖ TRỢ ĐA CỘT)
+            customColumnsDisplay.forEach(colName => {
+                fields.push(`"${r.custom_data[colName] || ''}"`);
             });
 
             return fields.join(';');
@@ -588,7 +616,7 @@ export default function App() {
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-    }, [customColumns]);
+    }, [customColumnsDisplay]);
 
     // Xử lý sự kiện chỉnh sửa điểm thủ công
     const handleScoreChange = useCallback((index, fileName, newScore) => {
@@ -653,11 +681,10 @@ export default function App() {
         setProcessingStatus('');
         
         if (newResults.some(r => r.status === 'success')) {
-            // Download CSV sử dụng processedResults.successfulResults
-            // Nhưng cần chờ useMemo xử lý xong nên sẽ kích hoạt sau
+            downloadCSV(newResults);
         }
         
-    }, [extractDataFromImageCallback]);
+    }, [downloadCSV, extractDataFromImageCallback]);
 
 
     // Xử lý thay đổi tệp (TỰ ĐỘNG XỬ LÝ)
@@ -702,10 +729,6 @@ export default function App() {
     const onButtonClick = () => {
         fileInputRef.current?.click();
     };
-    
-    // Lấy tên cột tùy chỉnh để hiển thị trong bảng
-    const customColumnsDisplay = customColumns.split(',').map(c => c.trim()).filter(c => c.length > 0);
-    const hasCustomColumn = customColumnsDisplay.length > 0;
     
     // --- Render Logic (UI)
 
@@ -764,15 +787,29 @@ export default function App() {
 
                 {/* Phần Nhập cột Tùy chỉnh */}
                 <div className='mt-6 p-4 bg-gray-700/50 rounded-xl'>
-                    <label htmlFor="custom-columns" className='block text-sm font-medium text-gray-300 mb-2'>
+                    <label className='block text-sm font-medium text-gray-300 mb-2'>
                         Cột Cần Trích Xuất Thêm (Ngoài Tên & Điểm):
                     </label>
+                    <div className='flex flex-wrap gap-x-4 gap-y-2 mb-3'>
+                        {DEFAULT_CUSTOM_COLUMNS.map(col => (
+                            <label key={col} className="flex items-center text-gray-400 text-sm cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={selectedCheckboxes.has(col)}
+                                    onChange={(e) => handleCheckboxChange(col, e.target.checked)}
+                                    className="h-4 w-4 text-indigo-600 rounded border-gray-600 focus:ring-indigo-500 bg-gray-900"
+                                    style={{ accentColor: accentColor }}
+                                />
+                                <span className="ml-2">{col}</span>
+                            </label>
+                        ))}
+                    </div>
                     <input
-                        id="custom-columns"
+                        id="custom-columns-input"
                         type="text"
-                        placeholder='Ví dụ: Mã học sinh, Tên lớp (phân tách bằng dấu phẩy)'
-                        value={customColumns}
-                        onChange={(e) => setCustomColumns(e.target.value)}
+                        placeholder='Các cột khác (phân tách bằng dấu phẩy): Ví dụ: Chữ ký, Số báo danh'
+                        value={customColumnsString}
+                        onChange={(e) => handleSetCustomColumnsString(e.target.value)}
                         className='w-full p-3 rounded-lg bg-gray-900 text-gray-100 border border-gray-600 focus:ring-2 focus:ring-indigo-500'
                         style={{ borderColor: accentColor }}
                     />
