@@ -1,113 +1,39 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { initializeApp, getApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { getFirestore, collection, query, onSnapshot, addDoc, doc, updateDoc } from 'firebase/firestore';
 
 // =======================================================
-// 1. TYPES & HẰNG SỐ VÀ LOGIC FIREBASE
+// 1. TYPES & HẰNG SỐ (CONSTANTS)
 // =======================================================
 
-// --- TYPE DEFINITIONS (Để dễ theo dõi trong JSDoc) ---
 /**
  * Định nghĩa kiểu dữ liệu cho kết quả trích xuất
  * @typedef {object} StudentScore
  * @property {string} ten_hoc_sinh
  * @property {string} diem_so
- * @property {Object.<string, string>} custom_data
+ * @property {object} [custom_data] Lưu trữ tất cả cột tùy chỉnh (ví dụ: { 'Mã học sinh': '123' })
  */
 
 /**
  * Định nghĩa kiểu dữ liệu cho kết quả hiển thị
  * @typedef {object} ExtractionResult
+ * @property {string} id - Firestore Document ID
  * @property {'success' | 'error'} status
  * @property {string} fileName
  * @property {string} ten_hoc_sinh
  * @property {string} diem_so
- * @property {Object.<string, string>} custom_data
+ * @property {object} [custom_data]
  * @property {string} [errorMessage]
  */
 
-// --- HẰNG SỐ API ---
+// KHAI BÁO CÁC HẰNG SỐ CỦA DỊCH VỤ (KHÔNG BAO GỒM API KEY)
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
 
-// --- LOGIC LẤY API KEY AN TOÀN ---
-const getApiKeyFromEnv = () => {
-    let key = "";
-    try {
-        if (typeof import.meta !== 'undefined' && import.meta.env) {
-            key = import.meta.env.VITE_GEMINI_API_KEY || "";
-        }
-    } catch (e) { /* Bỏ qua lỗi cú pháp/tham chiếu nếu môi trường không hỗ trợ */ }
-    
-    if (typeof __api_key !== 'undefined') {
-        key = __api_key;
-    }
-    return key;
-};
-
-// Khai báo các instance Firebase ở scope ngoài (sẽ được khởi tạo trong useEffect)
-// CHÚ Ý: Mã này giả định các hàm Firebase (initializeApp, getAuth,...) được cung cấp ở scope global.
-let app, db, auth;
-let isFirebaseInitialized = false;
-
-// --- LOGIC KHỞI TẠO VÀ LƯU TRỮ (SỬ DỤNG HÀM GLOBAL) ---
-
-const initializeFirebase = () => {
-    if (isFirebaseInitialized) return;
-    try {
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-        // Kiểm tra xem các hàm Firebase có tồn tại trong phạm vi toàn cục không
-        if (firebaseConfig && typeof initializeApp === 'function') {
-            app = initializeApp(firebaseConfig);
-            db = getFirestore(app);
-            auth = getAuth(app);
-            isFirebaseInitialized = true;
-            console.log("Firebase initialized successfully (Global).");
-        } else {
-            console.error("Firebase config or global functions not found.");
-        }
-    } catch (error) {
-        console.error("Failed to initialize Firebase:", error);
-    }
-};
-
-const signInUser = async () => {
-    if (!auth || typeof signInWithCustomToken !== 'function') return 'GUEST';
-    
-    try {
-        const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-        
-        if (token) {
-            const userCredential = await signInWithCustomToken(auth, token);
-            return userCredential.user.uid;
-        } else {
-            const userCredential = await signInAnonymously(auth);
-            return userCredential.user.uid;
-        }
-    } catch (error) {
-        console.error("Firebase Auth Error:", error);
-        return 'GUEST';
-    }
-};
-
-const saveResultToFirestore = async (userId, data) => {
-    if (!db || userId === 'GUEST' || typeof addDoc !== 'function') return;
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-    
-    try {
-        // Lưu dữ liệu vào collection bảo mật của người dùng
-        const resultsCollection = collection(db, `artifacts/${appId}/users/${userId}/results`);
-        
-        // Ghi đè lên document cũ nếu cần, hoặc tạo document mới. Ở đây tạo mới mỗi lần xử lý.
-        await addDoc(resultsCollection, {
-            timestamp: Date.now(),
-            results: data,
-        });
-        console.log(`[Firestore] Đã lưu ${data.length} kết quả cho user: ${userId}`);
-    } catch (error) {
-        console.error("Firestore Save Error:", error);
-    }
-};
-
-
-// --- LOGIC API DỊCH VỤ ---
+// Các biến toàn cục cho Firebase (sẽ được khởi tạo trong useEffect)
+let db = null;
+let auth = null;
+let resultsCollection = null;
 
 /**
  * Hàm chuyển đổi tệp hình ảnh thành định dạng Base64
@@ -124,41 +50,11 @@ const fileToGenerativePart = async (file) => {
 };
 
 /**
- * Hàm gọi AI lần 2 để lấy nhận xét (feedback)
- */
-const getAiFeedback = async (apiKey, successfulResults, performanceSummary) => {
-    if (!apiKey || successfulResults.length === 0) return null;
-
-    const dataSnapshot = successfulResults.map(r => ({
-        ten_hoc_sinh: r.ten_hoc_sinh,
-        diem_so: r.diem_so,
-    }));
-
-    const prompt = `Phân tích bộ dữ liệu điểm số sau: ${JSON.stringify(dataSnapshot)}. Điểm trung bình là ${performanceSummary.averageScore}, Tỷ lệ đỗ là ${performanceSummary.passRate}%. Dựa trên các chỉ số này, hãy đưa ra một nhận xét ngắn gọn (tối đa 3 câu, bằng Tiếng Việt) về hiệu suất của lớp. Nếu phát hiện điểm số bất thường, hãy đưa ra cảnh báo.`;
-
-    const payload = {
-        contents: [{ parts: [{ text: prompt }] }],
-    };
-
-    // Retry Logic (không cần backoff cho API text đơn giản)
-    try {
-        const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        const result = await response.json();
-        return result?.candidates?.[0]?.content?.parts?.[0]?.text || "Không thể tạo nhận xét từ AI.";
-    } catch (e) {
-        console.error("Lỗi khi lấy feedback từ AI:", e);
-        return "Lỗi khi kết nối AI để phân tích.";
-    }
-};
-
-
-/**
- * Hàm gọi API Gemini để trích xuất dữ liệu (Chấp nhận apiKey như một tham số)
+ * Hàm gọi API Gemini để trích xuất dữ liệu (Đã tích hợp Chuẩn hóa Tên và Điểm)
+ * @param {File} imageFile 
+ * @param {string} apiKey - Phải được truyền từ React State
+ * @param {string[]} requiredColumns - Các cột tùy chỉnh cần trích xuất
+ * @returns {Promise<StudentScore[]>}
  */
 const extractDataFromImage = async (imageFile, apiKey, requiredColumns) => {
     if (!apiKey) {
@@ -168,37 +64,36 @@ const extractDataFromImage = async (imageFile, apiKey, requiredColumns) => {
     const model = 'gemini-2.5-flash-preview-05-20';
     const imagePart = await fileToGenerativePart(imageFile);
     
-    // Xử lý cột: Lọc các cột tùy chỉnh (trừ Tên và Điểm)
-    const extraColumns = requiredColumns.filter(col => 
-        col.toLowerCase() !== 'tên học sinh' && col.toLowerCase() !== 'điểm số' && col.length > 0
-    );
-    const extraColumnsStr = extraColumns.length > 0 ? `, và các cột khác: [${extraColumns.join(', ')}]` : '';
-    
-    // Prompt yêu cầu trích xuất cột tùy chỉnh
-    const prompt = `Bạn là một CHUYÊN GIA PHÂN TÍCH BÀI KIỂM TRA. Từ hình ảnh danh sách điểm, hãy trích xuất **TẤT CẢ** các cặp Tên học sinh và Tổng điểm. ${extraColumnsStr}
+    const columnsStr = requiredColumns.join(', ');
+
+    // Prompt yêu cầu trích xuất cột tùy chỉnh và chuẩn hóa
+    const prompt = `Bạn là một CHUYÊN GIA PHÂN TÍCH BÀI KIỂM TRA. Từ hình ảnh danh sách điểm, hãy trích xuất **TẤT CẢ** các cột sau: [${columnsStr}].
 
 YÊU CẦU:
 1. Trích xuất tất cả học sinh.
-2. Cột Tên học sinh phải được chuẩn hóa về định dạng Proper Case (ví dụ: 'nguyẽn văn a' -> 'Nguyễn Văn A').
-3. Điểm số phải được chuẩn hóa về thang điểm 10.0 (nếu phát hiện thang điểm khác, hãy quy đổi về 10.0, làm tròn 2 chữ số thập phân).
-4. TRẢ VỀ DỮ LIỆU TÙY CHỈNH THEO ĐÚNG TÊN TRƯỜNG DƯỚI DẠNG JSON MẢNG.`;
+2. Cột Tên học sinh phải được chuẩn hóa về định dạng Proper Case (Chữ cái đầu mỗi từ viết hoa, ví dụ: 'nguyẽn văn a' -> 'Nguyễn Văn A').
+3. Điểm số phải được chuẩn hóa về thang điểm 10.0 (nếu phát hiện thang điểm khác, hãy quy đổi về 10.0).
+4. Đảm bảo trả về chính xác các trường trong cấu trúc JSON, sử dụng tên trường là dạng snake_case (ví dụ: 'Mã học sinh' -> 'ma_hoc_sinh').`;
 
     // Định nghĩa Schema dựa trên các cột tùy chỉnh
     const properties = {
         ten_hoc_sinh: { type: "STRING", description: "Họ tên đầy đủ của học sinh (đã chuẩn hóa)." },
-        diem_so: { type: "STRING", description: "Điểm số cuối cùng đã chuẩn hóa về thang 10.0 (dạng chuỗi)." }
+        diem_so: { type: "STRING", description: "Điểm số cuối cùng đã chuẩn hóa về thang 10.0." }
     };
 
     const requiredFields = ['ten_hoc_sinh', 'diem_so'];
 
     // Thêm cột tùy chỉnh vào schema
-    extraColumns.forEach(col => {
-        // Tạo key chuẩn cho JSON, ví dụ: 'Mã học sinh' -> 'ma_hoc_sinh'
-        const key = col.replace(/\s/g, '_').toLowerCase();
-        properties[key] = { type: "STRING", description: `Dữ liệu trích xuất cho cột: ${col}` };
-        requiredFields.push(key);
+    requiredColumns.forEach(col => {
+        const key = col.toLowerCase().replace(/\s/g, '_');
+        if (key !== 'ten_hoc_sinh' && key !== 'diem_so') {
+            properties[key] = { 
+                type: "STRING", 
+                description: `Dữ liệu trích xuất cho cột: ${col}` 
+            };
+            requiredFields.push(key);
+        }
     });
-
 
     const responseSchema = {
         type: "ARRAY",
@@ -209,7 +104,15 @@ YÊU CẦU:
         },
     };
 
-    // Retry Logic
+    const payload = {
+        contents: [{ parts: [imagePart, { text: prompt }] }],
+        generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: responseSchema,
+        },
+    };
+
+    // Áp dụng tính năng Retry (Backoff)
     const MAX_RETRIES = 3;
     let lastError = null;
 
@@ -218,41 +121,27 @@ YÊU CẦU:
             const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ parts: [imagePart, { text: prompt }] }],
-                    generationConfig: {
-                        responseMimeType: "application/json",
-                        responseSchema: responseSchema,
-                    },
-                })
+                body: JSON.stringify(payload)
             });
 
             if (response.ok) {
                 const result = await response.json();
                 const jsonText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
 
-                if (!jsonText) {
-                    throw new Error("Không nhận được nội dung phản hồi từ API.");
-                }
+                if (!jsonText) throw new Error("Không nhận được nội dung phản hồi từ API.");
             
                 const parsedData = JSON.parse(jsonText);
-                if (!Array.isArray(parsedData)) {
-                    throw new Error("Đầu ra JSON không phải là Mảng hợp lệ.");
-                }
+                if (!Array.isArray(parsedData)) throw new Error("Đầu ra JSON không phải là Mảng hợp lệ.");
 
-                // Xử lý dữ liệu trích xuất để nhóm các cột tùy chỉnh
+                // Xử lý và chuẩn hóa tên trường dữ liệu tùy chỉnh
                 const standardizedData = parsedData.map(item => {
-                    const newItem = { 
-                        ten_hoc_sinh: item.ten_hoc_sinh, 
-                        diem_so: item.diem_so,
-                        custom_data: {}, // Lưu trữ dữ liệu tùy chỉnh dưới dạng Object
-                    };
-
+                    const newItem = { ten_hoc_sinh: item.ten_hoc_sinh, diem_so: item.diem_so, custom_data: {} };
                     Object.keys(item).forEach(key => {
-                        // Kiểm tra xem key có phải là key tùy chỉnh (ma_hoc_sinh, ten_lop, ...) không
-                        const originalColName = extraColumns.find(col => col.replace(/\s/g, '_').toLowerCase() === key);
-                        if (originalColName) {
-                            newItem.custom_data[originalColName] = item[key];
+                        const originalColumnName = requiredColumns.find(col => col.toLowerCase().replace(/\s/g, '_') === key);
+                        
+                        // Lưu dữ liệu tùy chỉnh vào đối tượng custom_data
+                        if (originalColumnName && key !== 'ten_hoc_sinh' && key !== 'diem_so') {
+                            newItem.custom_data[originalColumnName] = item[key];
                         }
                     });
                     return newItem;
@@ -282,6 +171,34 @@ YÊU CẦU:
     }
 };
 
+/**
+ * Hàm gọi AI lần 2 để lấy nhận xét (feedback)
+ */
+const getAiFeedback = async (apiKey, successfulResults, performanceSummary) => {
+    if (!apiKey || successfulResults.length === 0) return null;
+
+    const dataSnapshot = successfulResults.map(r => ({
+        ten_hoc_sinh: r.ten_hoc_sinh,
+        diem_so: r.diem_so,
+    }));
+
+    const prompt = `Phân tích bộ dữ liệu điểm số sau: ${JSON.stringify(dataSnapshot)}. Điểm trung bình là ${performanceSummary.averageScore}, Tỷ lệ đỗ là ${performanceSummary.passRate}. Dựa trên các chỉ số này, hãy đưa ra một nhận xét ngắn gọn (tối đa 2 câu) về hiệu suất của lớp. Nếu phát hiện điểm số bất thường (quá cao hoặc quá thấp so với trung bình), hãy đưa ra cảnh báo.`;
+
+    try {
+        const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+        });
+
+        const result = await response.json();
+        return result?.candidates?.[0]?.content?.parts?.[0]?.text || "Không thể tạo nhận xét từ AI.";
+    } catch (e) {
+        console.error("Lỗi khi lấy feedback từ AI:", e);
+        return "Lỗi khi kết nối AI để phân tích.";
+    }
+};
+
 
 // =======================================================
 // 2. ICON COMPONENTS
@@ -301,7 +218,7 @@ const SpinnerIcon = (props) => (
 
 const CsvIcon = (props) => (
     <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-file-text">
-        <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v4a2 2 0 in 0 2 2h4" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" />
+        <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v4a2 2 0 0 0 2 2h4" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" />
     </svg>
 );
 
@@ -322,14 +239,11 @@ const ChevronDownIcon = (props) => (
 // 3. RESULTS TABLE COMPONENTS (Đã hợp nhất Logic)
 // =======================================================
 
-/**
- * Component hiển thị tóm tắt hiệu suất lớp học
- */
 const PerformanceSummary = ({ summary, accentColor }) => {
     const data = [
         { label: "Tổng số học sinh", value: summary.totalStudents },
-        { label: "Điểm trung bình lớp", value: `${summary.averageScore} / 10.0`, color: summary.averageScore >= 5.0 ? 'text-green-400' : 'text-red-400' },
-        { label: "Tỷ lệ Đỗ ({'>'}= 5.0)", value: `${summary.passRate}%`, color: summary.passRate >= 70 ? 'text-green-400' : 'text-yellow-400' },
+        { label: "Điểm trung bình lớp", value: `${summary.averageScore.toFixed(2)} / 10.0`, color: summary.averageScore >= 5.0 ? 'text-green-400' : 'text-red-400' },
+        { label: "Tỷ lệ Đỗ ({'>'}= 5.0)", value: `${summary.passRate.toFixed(1)}%`, color: summary.passRate >= 70 ? 'text-green-400' : 'text-yellow-400' },
         { label: "Giỏi ({'>'}= 8.0)", value: `${summary.excellentCount} hs`, color: 'text-indigo-400' },
     ];
 
@@ -345,9 +259,6 @@ const PerformanceSummary = ({ summary, accentColor }) => {
     );
 };
 
-/**
- * Component hiển thị thông tin phản hồi từ AI
- */
 const AiFeedbackBox = ({ feedback, accentColor, isLoading }) => {
     if (!feedback) return null;
 
@@ -384,12 +295,11 @@ const ResultsTable = ({ results, editedScores, onScoreChange, onSort, sortConfig
         { key: 'ten_hoc_sinh', label: 'Tên Học sinh', sortable: true },
     ];
 
-    // Lấy tên cột tùy chỉnh (tối đa 3 cột)
-    const extraHeaders = customColumnsDisplay.slice(0, 3);
-    extraHeaders.forEach((colName, index) => {
+    // Thêm các cột tùy chỉnh vào header
+    customColumnsDisplay.forEach(colName => {
         headers.push({ 
-            key: colName, // Sử dụng tên cột gốc làm key
-            label: colName, 
+            key: colName, 
+            label: colName,
             sortable: false 
         });
     });
@@ -425,11 +335,11 @@ const ResultsTable = ({ results, editedScores, onScoreChange, onSort, sortConfig
                     </tr>
                 </thead>
                 <tbody className="bg-gray-800 divide-y divide-gray-700">
-                    {results.map((result, index) => {
-                        const editKey = `${index}_${result.fileName}`;
-                        const isEdited = !!editedScores[editKey];
-                        const displayScore = editedScores[editKey] || result.diem_so;
-                        
+                    {results.map((result) => {
+                        const editKey = `${result.id}`;
+                        const isEdited = result.id && !!editedScores[editKey]; // Kiểm tra ID hợp lệ
+                        const displayScore = editedScores[editKey] !== undefined ? editedScores[editKey] : result.diem_so;
+
                         return (
                             <tr key={editKey} className={result.status === 'error' ? 'bg-red-900/20 hover:bg-red-900/40 transition-colors' : (isEdited ? 'bg-yellow-800/30 hover:bg-yellow-800/40 transition-colors' : 'hover:bg-indigo-900/20 transition-colors')}>
                                 <td className="px-4 py-3 min-w-[100px]">
@@ -443,9 +353,9 @@ const ResultsTable = ({ results, editedScores, onScoreChange, onSort, sortConfig
                                 </td>
 
                                 {/* Hiển thị các cột tùy chỉnh */}
-                                {extraHeaders.map((header, colIndex) => (
-                                    <td key={colIndex} className="px-4 py-3 text-sm text-gray-400 break-words min-w-[100px] max-w-[200px]">
-                                        {result.custom_data[header.label] || 'N/A'}
+                                {customColumnsDisplay.map(colName => (
+                                    <td key={colName} className="px-4 py-3 text-sm text-gray-400 break-words min-w-[100px] max-w-[200px]">
+                                        {result.custom_data?.[colName] || 'N/A'}
                                     </td>
                                 ))}
 
@@ -458,7 +368,7 @@ const ResultsTable = ({ results, editedScores, onScoreChange, onSort, sortConfig
                                         <input
                                             type="text"
                                             value={displayScore}
-                                            onChange={(e) => onScoreChange(index, result.fileName, e.target.value)}
+                                            onChange={(e) => onScoreChange(result.id, e.target.value)}
                                             className="w-full text-center p-1 rounded bg-gray-900 border"
                                             style={{ borderColor: isEdited ? '#fcd34d' : '#4b5563', color: isEdited ? '#fcd34d' : '#e5e7eb' }}
                                         />
@@ -488,147 +398,164 @@ export default function App() {
     const [error, setError] = useState(null);
     const [dragActive, setDragActive] = useState(false);
     const [processingStatus, setProcessingStatus] = useState('');
-    const [isColumnPickerOpen, setIsColumnPickerOpen] = useState(false); // Mở/đóng Accordion
-
-    // --- States FIREBASE/AUTH ---
-    const [authReady, setAuthReady] = useState(false); // Trạng thái xác thực Firebase
-    const [userId, setUserId] = useState('GUEST'); // User ID Firebase
-
-    // --- States Tùy chỉnh (Sử dụng localStorage)
+    const [aiFeedback, setAiFeedback] = useState(null);
+    const [isAiFeedbackLoading, setIsAiFeedbackLoading] = useState(false);
+    
+    // --- States Cấu hình (Lưu trữ và Khôi phục)
     const getInitialConfig = (key, defaultValue) => {
         try {
             const saved = localStorage.getItem(key);
-            return saved !== null ? (JSON.parse(saved) || defaultValue) : defaultValue;
+            return saved !== null ? (key.includes('Checked') ? JSON.parse(saved) : saved) : defaultValue;
         } catch (e) {
             return defaultValue;
         }
     };
-
+    
+    // Cấu hình (lưu trong localStorage)
     const [accentColor, setAccentColorState] = useState(getInitialConfig('accentColor', '#4f46e5')); 
-    const [customColumnsChecked, setCustomColumnsCheckedState] = useState(getInitialConfig('customColumnsChecked', { 'Mã học sinh': false, 'Tên lớp': false, 'Chữ ký': false })); 
+    const [customColumnsChecked, setCustomColumnsCheckedState] = useState(getInitialConfig('customColumnsChecked', ['Mã học sinh'])); 
     const [customColumnsText, setCustomColumnsTextState] = useState(getInitialConfig('customColumnsText', '')); 
+    const [isColumnPickerOpen, setIsColumnPickerOpen] = useState(false);
     
-    // --- Refs & Handlers cho Config
-    
-    const setAccentColor = (newColor) => {
-        setAccentColorState(newColor);
-        try { localStorage.setItem('accentColor', JSON.stringify(newColor)); } catch (e) {}
+    const setConfigState = (key, value, setter) => {
+        setter(value);
+        try { localStorage.setItem(key, typeof value === 'object' ? JSON.stringify(value) : value); } catch (e) {}
     };
 
-    const setCustomColumnsChecked = (newChecked) => {
-        setCustomColumnsCheckedState(newChecked);
-        try { localStorage.setItem('customColumnsChecked', JSON.stringify(newChecked)); } catch (e) {}
-    };
+    const setAccentColor = (newColor) => setConfigState('accentColor', newColor, setAccentColorState);
+    const setCustomColumnsChecked = (newChecked) => setConfigState('customColumnsChecked', newChecked, setCustomColumnsCheckedState);
+    const setCustomColumnsText = (newText) => setConfigState('customColumnsText', newText, setCustomColumnsTextState);
 
-    const setCustomColumnsText = (newText) => {
-        setCustomColumnsTextState(newText);
-        try { localStorage.setItem('customColumnsText', JSON.stringify(newText)); } catch (e) {}
-    };
-    
     
     const fileInputRef = useRef(null);
+    const [dbInstance, setDbInstance] = useState(null);
+    const [userId, setUserId] = useState(null); // ID người dùng hiện tại
     const [apiKey, setApiKey] = useState(null); // API Key từ State (an toàn)
     const [filter, setFilter] = useState('all'); // 'all', 'pass', 'fail'
     const [sortConfig, setSortConfig] = useState({ key: 'ten_hoc_sinh', direction: 'ascending' });
     /** @type {[Object.<string, string>, React.Dispatch<React.SetStateAction<Object.<string, string>>>]} */
-    const [editedScores, setEditedScores] = useState({}); // { index_fileName: 'new_score' }
-    const [aiFeedback, setAiFeedback] = useState(null);
-    const [isAiFeedbackLoading, setIsAiFeedbackLoading] = useState(false);
+    const [editedScores, setEditedScores] = useState({}); // { documentId: 'new_score' }
 
 
+    // Hợp nhất cột tùy chỉnh thành một danh sách duy nhất để API xử lý
+    const requiredColumnsList = useMemo(() => {
+        const textCols = customColumnsText.split(',').map(c => c.trim()).filter(c => c.length > 0);
+        const combined = [...customColumnsChecked, ...textCols];
+        // Loại bỏ trùng lặp và các cột đã mặc định
+        const unique = [...new Set(combined)].filter(c => c.toLowerCase() !== 'tên học sinh' && c.toLowerCase() !== 'điểm số');
+        return unique;
+    }, [customColumnsChecked, customColumnsText]);
+
+    // Lấy tên cột tùy chỉnh để hiển thị trong bảng
+    const customColumnsDisplay = useMemo(() => {
+        // Chỉ trả về các cột cần hiển thị
+        return requiredColumnsList;
+    }, [requiredColumnsList]);
+    
     // --- Hooks khởi tạo và Service Calls
 
-    // 1. Khởi tạo API Key và Firebase An toàn
+    // 1. Khởi tạo Firebase và Auth
     useEffect(() => {
-        initializeFirebase();
-        
-        let key = getApiKeyFromEnv();
-        setApiKey(key);
-        
-        if (!key) {
-             setError("API Key chưa được thiết lập. Vui lòng kiểm tra biến môi trường VITE_GEMINI_API_KEY.");
-        }
-        
-        // --- Xử lý Auth Firebase ---
-        const unsubscribe = onAuthStateChanged(auth, (user) => {
-            if (user) {
-                setUserId(user.uid);
-            } else {
-                // Đăng nhập ban đầu hoặc khi người dùng chưa có phiên
-                signInUser().then(uid => {
-                    setUserId(uid);
-                    setAuthReady(true);
-                });
+        // Khởi tạo Firebase
+        if (typeof __firebase_config !== 'undefined' && !dbInstance) {
+            const firebaseConfig = JSON.parse(__firebase_config);
+            try {
+                 getApp(); // Kiểm tra nếu app đã được khởi tạo
+            } catch (e) {
+                initializeApp(firebaseConfig);
             }
-            setAuthReady(true);
-        });
+            
+            auth = getAuth();
+            db = getFirestore();
+            setDbInstance(db);
 
-        // Cleanup function cho onAuthStateChanged
-        return () => {
-            if (unsubscribe) unsubscribe();
-        };
-        // --- End Auth ---
-        
-    }, []);
-
-    // 2. Logic Lắng nghe Firestore (Load dữ liệu đã lưu)
-    useEffect(() => {
-        if (!db || !authReady || userId === 'GUEST' || typeof onSnapshot !== 'function') return;
-
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const resultsCollection = collection(db, `artifacts/${appId}/users/${userId}/results`);
-        
-        // Lắng nghe dữ liệu
-        const unsubscribe = onSnapshot(query(resultsCollection), (snapshot) => {
-            const loadedResults = [];
-            snapshot.forEach(doc => {
-                // Chúng ta chỉ load bản ghi cuối cùng của phiên
-                const data = doc.data().results;
-                if (Array.isArray(data)) {
-                    loadedResults.push(...data);
+            // Xử lý đăng nhập
+            const handleAuth = async () => {
+                try {
+                    // Ưu tiên token nếu có, nếu không, đăng nhập ẩn danh
+                    if (typeof __initial_auth_token !== 'undefined') {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                } catch (e) {
+                    console.error("Lỗi đăng nhập Firebase:", e);
+                }
+            };
+            
+            // Theo dõi trạng thái Auth và đặt userId
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    setUserId(user.uid);
+                } else {
+                    handleAuth(); // Nếu chưa đăng nhập, thử đăng nhập
                 }
             });
-            
-            if (loadedResults.length > 0) {
-                setResults(loadedResults);
-                setError(null);
+        }
+
+        // Khởi tạo API Key an toàn
+        let key = "";
+        try {
+            if (typeof import.meta !== 'undefined' && import.meta.env) {
+                key = import.meta.env.VITE_GEMINI_API_KEY || "";
             }
-            console.log(`[Firestore] Đã tải ${loadedResults.length} kết quả.`);
-        }, (error) => {
-            console.error("Firestore Listener Error:", error);
-            setError("Lỗi khi tải dữ liệu đã lưu. Vui lòng kiểm tra Console.");
-        });
-
-        // Cleanup function
-        return () => unsubscribe();
+        } catch (e) {}
         
-    }, [authReady, userId]);
+        if (typeof __api_key !== 'undefined') {
+            key = __api_key;
+        }
+        
+        setApiKey(key);
+        if (!key) {
+             setError("API Key chưa được thiết lập. Vui lòng kiểm tra biến môi trường.");
+        }
+    }, [dbInstance]);
 
+
+    // 2. Lắng nghe dữ liệu Firestore khi userId có sẵn
+    useEffect(() => {
+        if (dbInstance && userId) {
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            // Đường dẫn lưu trữ: /artifacts/{appId}/users/{userId}/results
+            const collectionPath = `/artifacts/${appId}/users/${userId}/results`;
+            resultsCollection = collection(dbInstance, collectionPath);
+            
+            const q = query(resultsCollection);
+
+            // onSnapshot để lắng nghe dữ liệu theo thời gian thực
+            const unsubscribe = onSnapshot(q, (snapshot) => {
+                const loadedResults = snapshot.docs.map(doc => ({
+                    ...doc.data(),
+                    id: doc.id
+                }));
+                // Tải dữ liệu từ Firestore vào state Results
+                setResults(loadedResults);
+            }, (error) => {
+                console.error("Lỗi lắng nghe Firestore:", error);
+                setError("Không thể tải dữ liệu đã lưu. Vui lòng kiểm tra kết nối.");
+            });
+
+            return () => unsubscribe(); // Hủy lắng nghe khi component unmounts
+        }
+    }, [dbInstance, userId]);
 
     // 3. Logic API Callback (Sử dụng API Key từ State)
     const extractDataFromImageCallback = useCallback(async (imageFile) => {
-        // Lấy các cột tùy chỉnh đã chọn
-        const checkedCols = Object.keys(customColumnsChecked).filter(k => customColumnsChecked[k]);
-        const textCols = customColumnsText.split(',').map(c => c.trim()).filter(c => c.length > 0);
-        const requiredColumns = ['Tên học sinh', 'Điểm số', ...checkedCols, ...textCols];
-
-        if (!apiKey) {
-            throw new Error("API Key chưa được thiết lập. (Lỗi Runtime)");
-        }
-        return extractDataFromImage(imageFile, apiKey, requiredColumns);
-    }, [apiKey, customColumnsChecked, customColumnsText]);
+        return extractDataFromImage(imageFile, apiKey, ['Tên học sinh', 'Điểm số', ...requiredColumnsList]);
+    }, [apiKey, requiredColumnsList]);
 
     // --- Logic Tóm tắt Hiệu suất & Sắp xếp (useMemo)
 
     const processedResults = useMemo(() => {
         // Áp dụng điểm đã chỉnh sửa
-        const resultsWithEdits = results.map((result, index) => {
-            // Cần tìm key chỉnh sửa dựa trên dữ liệu hiện tại
-            const editKey = `${results.indexOf(result)}_${result.fileName}`; 
+        const resultsWithEdits = results.map((result) => {
+            const editKey = `${result.id}`;
+            // Ưu tiên điểm đã chỉnh sửa
             const score = editedScores[editKey] !== undefined ? editedScores[editKey] : result.diem_so;
             
-            if (result.status === 'success' || score !== 'N/A') {
-                return { ...result, diem_so: score };
+            // Chỉ tính điểm đã trích xuất thành công
+            if (result.status === 'success' || (score !== 'N/A' && score !== '' && !isNaN(parseFloat(score)))) {
+                 return { ...result, diem_so: score };
             }
             return null;
         }).filter(r => r !== null && r.diem_so !== 'N/A' && r.diem_so !== ''); 
@@ -636,24 +563,23 @@ export default function App() {
         // Tính tóm tắt hiệu suất
         const totalStudents = resultsWithEdits.length;
         const totalScore = resultsWithEdits.reduce((sum, r) => sum + parseFloat(r.diem_so || 0), 0);
-        const averageScore = totalStudents > 0 ? (totalScore / totalStudents).toFixed(2) : 0;
+        const averageScore = totalStudents > 0 ? (totalScore / totalStudents) : 0;
         const passCount = resultsWithEdits.filter(r => parseFloat(r.diem_so) >= 5.0).length;
-        const passRate = totalStudents > 0 ? (passCount / totalStudents * 100).toFixed(1) : 0;
+        const passRate = totalStudents > 0 ? (passCount / totalStudents * 100) : 0;
         const excellentCount = resultsWithEdits.filter(r => parseFloat(r.diem_so) >= 8.0).length;
 
         const performanceSummary = {
             totalStudents,
-            averageScore: parseFloat(averageScore),
+            averageScore,
             passCount,
-            passRate: parseFloat(passRate),
+            passRate,
             excellentCount
         };
 
         // Áp dụng Lọc
         const filtered = results.filter(r => {
-            if (r.status === 'error' && filter === 'all') return true;
-            
-            const score = parseFloat(editedScores[`${results.indexOf(r)}_${r.fileName}`] || r.diem_so || 0);
+            const editKey = `${r.id}`;
+            const score = parseFloat(editedScores[editKey] || r.diem_so || 0);
 
             if (filter === 'pass') return r.status === 'success' && score >= 5.0;
             if (filter === 'fail') return r.status === 'success' && score < 5.0;
@@ -663,30 +589,32 @@ export default function App() {
 
         // Áp dụng Sắp xếp
         const sorted = [...filtered].sort((a, b) => {
-            const getScore = (result) => parseFloat(editedScores[`${results.indexOf(result)}_${result.fileName}`] || result.diem_so || -1);
+            const getScore = (result) => parseFloat(editedScores[`${result.id}`] || result.diem_so || -1);
 
-            const aValue = a[sortConfig.key] || getScore(a);
-            const bValue = b[sortConfig.key] || getScore(b);
+            const aValue = a[sortConfig.key];
+            const bValue = b[sortConfig.key];
+            
+            let comparison = 0;
             
             if (sortConfig.key === 'ten_hoc_sinh') {
-                if (aValue < bValue) return sortConfig.direction === 'ascending' ? -1 : 1;
-                if (aValue > bValue) return sortConfig.direction === 'ascending' ? 1 : -1;
+                if (aValue < bValue) comparison = -1;
+                if (aValue > bValue) comparison = 1;
             } else if (sortConfig.key === 'diem_so') {
                 const aNum = getScore(a); 
                 const bNum = getScore(b); 
-                if (aNum < bNum) return sortConfig.direction === 'ascending' ? -1 : 1;
-                if (aNum > bNum) return sortConfig.direction === 'ascending' ? 1 : -1;
+                if (aNum < bNum) comparison = -1;
+                if (aNum > bNum) comparison = 1;
             }
-            return 0;
+            return sortConfig.direction === 'ascending' ? comparison : comparison * -1;
         });
 
         return { sortedResults: sorted, performanceSummary, successfulResults: resultsWithEdits };
 
-    }, [results, filter, sortConfig, editedScores, customColumnsChecked, customColumnsText]);
+    }, [results, filter, sortConfig, editedScores]);
     
     // 4. Effect để gọi AI Feedback sau khi xử lý xong (Lần gọi thứ 2)
     useEffect(() => {
-        if (!isLoading && processedResults.successfulResults.length > 0) {
+        if (!isLoading && processedResults.successfulResults.length > 0 && apiKey) {
             setIsAiFeedbackLoading(true);
             getAiFeedback(apiKey, processedResults.successfulResults, processedResults.performanceSummary)
                 .then(setAiFeedback)
@@ -695,32 +623,45 @@ export default function App() {
         } else if (results.length === 0) {
             setAiFeedback(null);
         }
-    }, [isLoading, processedResults.successfulResults.length, apiKey, processedResults.performanceSummary]);
+    }, [isLoading, processedResults.successfulResults.length, apiKey, processedResults.performanceSummary, results.length]);
 
 
     // --- Handlers
 
+    // Xử lý sự kiện chỉnh sửa điểm thủ công (Cập nhật vào EditedScores)
+    const handleScoreChange = useCallback((id, newScore) => {
+        setEditedScores(prev => ({ ...prev, [id]: newScore }));
+
+        // Sau khi chỉnh sửa, cập nhật lại Firestore (nếu đã lưu)
+        if (dbInstance && userId && id) {
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const docRef = doc(dbInstance, `/artifacts/${appId}/users/${userId}/results/${id}`);
+            // Chỉ cập nhật trường diem_so
+            updateDoc(docRef, { diem_so: newScore })
+                .catch(e => console.error("Lỗi cập nhật điểm số Firestore:", e));
+        }
+
+    }, [dbInstance, userId]);
+
     // Hàm tải về CSV (ĐÃ SỬA LỖI ĐỊNH DẠNG CSV VÀ ÁP DỤNG CỘT TÙY CHỈNH)
     const downloadCSV = useCallback((finalResults) => {
-        const successfulResults = finalResults.filter(r => r.status === 'success');
-        if (successfulResults.length === 0) return;
+        if (finalResults.length === 0) return;
 
-        // Lấy tất cả các cột cần thiết (bao gồm tên của cột tùy chỉnh)
-        const customColumnsHeader = Object.keys(finalResults[0]?.custom_data || {});
+        // Xử lý tiêu đề cột tùy chỉnh
+        const customColsHeader = requiredColumnsList.map(h => `"${h}"`).join(';');
+        const headers = ['"Tên học sinh"', '"Điểm số"', customColsHeader].filter(h => h).join(';');
         
-        // Tiêu đề: Tên HS, Điểm số, [Cột tùy chỉnh 1], [Cột tùy chỉnh 2], ...
-        const headers = ['"Tên học sinh"', '"Điểm số"', ...customColumnsHeader.map(h => `"${h}"`)].join(';'); 
-        
-        const rows = successfulResults.map(r => {
-            const displayScore = r.diem_so; // Trong finalResults đã là điểm cuối cùng
+        const rows = finalResults.map(r => {
+            // Lấy điểm đã chỉnh sửa hoặc điểm gốc
+            const displayScore = r.diem_so; 
             
             const fields = [`"${r.ten_hoc_sinh}"`, `"${displayScore}"`];
-            
-            // Thêm dữ liệu tùy chỉnh theo thứ tự tiêu đề
-            customColumnsHeader.forEach(header => {
-                fields.push(`"${r.custom_data[header] || ''}"`);
-            });
-
+            // Thêm dữ liệu tùy chỉnh từ object custom_data
+            if (r.custom_data) {
+                 requiredColumnsList.forEach(colName => {
+                    fields.push(`"${r.custom_data[colName] || ''}"`);
+                });
+            }
             return fields.join(';');
         });
 
@@ -737,38 +678,18 @@ export default function App() {
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-    }, []);
+    }, [requiredColumnsList]);
 
-    // Xử lý sự kiện chỉnh sửa điểm thủ công
-    const handleScoreChange = useCallback((index, fileName, newScore) => {
-        // Cần tìm index của hàng trong *danh sách results gốc*
-        const originalIndex = results.findIndex(r => results.indexOf(r) === index && r.fileName === fileName);
-        if (originalIndex === -1) return;
-        
-        const editKey = `${originalIndex}_${fileName}`;
-        setEditedScores(prev => ({ ...prev, [editKey]: newScore }));
-
-    }, [results]);
-
-    // Xử lý sự kiện click tiêu đề bảng để sắp xếp
-    const handleSort = (key) => {
-        let direction = 'ascending';
-        if (sortConfig.key === key && sortConfig.direction === 'ascending') {
-            direction = 'descending';
-        }
-        setSortConfig({ key, direction });
-    };
-
+    
     // Hàm xử lý chính (Auto-processing)
     const handleProcessFiles = useCallback(async (filesToProcess) => {
-        if (filesToProcess.length === 0) return;
+        if (filesToProcess.length === 0 || !apiKey || !dbInstance || !userId) return;
+        
         setIsLoading(true);
-        // KHÔNG RESET results để giữ lại dữ liệu Firestore đã tải.
         setEditedScores({}); 
         setError(null);
         setAiFeedback(null);
         
-        /** @type {ExtractionResult[]} */
         const newResults = [];
         
         for (let i = 0; i < filesToProcess.length; i++) {
@@ -776,17 +697,22 @@ export default function App() {
             setProcessingStatus(`Đang xử lý file ${i + 1} of ${filesToProcess.length}: ${file.name}`);
             
             try {
-                const extractedData = await extractDataFromImageCallback(file);
+                const extractedData = await extractDataFromImage(file, apiKey, ['Tên học sinh', 'Điểm số', ...requiredColumnsList]);
                 
                 if (Array.isArray(extractedData) && extractedData.length > 0) {
-                    extractedData.forEach(data => {
-                        newResults.push({
+                    // Lưu từng kết quả trích xuất vào Firestore
+                    extractedData.forEach(async (data) => {
+                        const docData = {
                             status: 'success',
                             fileName: file.name,
                             ten_hoc_sinh: data.ten_hoc_sinh || 'N/A',
                             diem_so: data.diem_so || 'N/A',
                             custom_data: data.custom_data || {},
-                        });
+                            createdAt: new Date().toISOString(),
+                            userId: userId
+                        };
+                        // AddDoc sẽ kích hoạt onSnapshot, cập nhật UI
+                        await addDoc(resultsCollection, docData);
                     });
                 } else {
                     newResults.push({ status: 'error', fileName: file.name, ten_hoc_sinh: 'N/A', diem_so: 'N/A', errorMessage: 'Không trích xuất được dữ liệu hợp lệ.' });
@@ -797,25 +723,20 @@ export default function App() {
                 if (errorMessage.includes("API Key chưa được thiết lập")) {
                     setError(errorMessage);
                 }
+                console.error("Lỗi xử lý file:", errorMessage);
                 newResults.push({ status: 'error', fileName: file.name, ten_hoc_sinh: 'N/A', diem_so: 'N/A', errorMessage: errorMessage });
             }
         }
 
-        // Thêm kết quả mới vào đầu danh sách kết quả đã có
-        setResults(prevResults => [...newResults, ...prevResults]);
+        // Các lỗi không lưu vào Firestore sẽ hiển thị tạm thời
+        if (newResults.length > 0) {
+            setResults(prev => [...newResults, ...prev]);
+        }
+        
         setIsLoading(false);
         setProcessingStatus('');
         
-        if (newResults.some(r => r.status === 'success')) {
-            downloadCSV(newResults);
-            // --- LƯU FIREBASE ---
-            if (userId !== 'GUEST') {
-                saveResultToFirestore(userId, newResults.filter(r => r.status === 'success'));
-            }
-            // --- END LƯU ---
-        }
-        
-    }, [downloadCSV, extractDataFromImageCallback, userId]);
+    }, [apiKey, dbInstance, userId, requiredColumnsList]);
 
 
     // Xử lý thay đổi tệp (TỰ ĐỘNG XỬ LÝ)
@@ -823,6 +744,7 @@ export default function App() {
         if (e.target.files) {
             const newFiles = Array.from(e.target.files);
             setFiles(newFiles);
+            setEditedScores({});
             setError(null);
             if (newFiles.length > 0) {
                 handleProcessFiles(newFiles);
@@ -838,6 +760,7 @@ export default function App() {
         if (e.dataTransfer.files && e.dataTransfer.files[0]) {
             const newFiles = Array.from(e.dataTransfer.files);
             setFiles(newFiles);
+            setEditedScores({});
             setError(null);
             handleProcessFiles(newFiles);
         }
@@ -858,15 +781,9 @@ export default function App() {
     const onButtonClick = () => {
         fileInputRef.current?.click();
     };
-    
-    // Lấy tên cột tùy chỉnh để hiển thị trong bảng
-    const customColumnsDisplay = Object.keys(customColumnsChecked).filter(k => customColumnsChecked[k]).concat(
-        customColumnsText.split(',').map(c => c.trim()).filter(c => c.length > 0)
-    );
-    
-    // --- Render Logic (UI)
 
-    if (apiKey === null || !authReady) {
+    // Render logic cho API Key
+    if (apiKey === null || !userId) { // Đợi cả API Key và User ID
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-900 p-4">
                 <div className="max-w-md w-full bg-gray-800 p-6 rounded-xl shadow-2xl text-center border-l-4 border-indigo-500">
@@ -894,7 +811,6 @@ export default function App() {
         );
     }
 
-
     return (
         <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8 bg-gray-900" onDragEnter={handleDrag}>
             {/* KHỐI CHỌN MÀU QUANG PHỔ */}
@@ -916,46 +832,52 @@ export default function App() {
                 >
                 <div className="text-center">
                     <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-gray-100" style={{ color: accentColor }}>Trích xuất điểm thi tự động (Gemini)</h1>
-                    <p className="mt-2 text-md text-gray-400">Ứng dụng đã được nâng cấp với khả năng phân tích và tùy chỉnh cột.</p>
+                    <p className="mt-2 text-md text-gray-400">Ứng dụng đã được nâng cấp với khả năng phân tích và tùy chỉnh cột. User ID: <code className='text-xs bg-gray-700 p-1 rounded'>{userId || 'Đang tải...'}</code></p>
                 </div>
 
-                {/* Phần Nhập cột Tùy chỉnh (Dạng Mở rộng/Accordion) */}
-                <div className='mt-6 p-4 bg-gray-700/50 rounded-xl'>
+                {/* Phần Nhập cột Tùy chỉnh (Dạng Mở rộng) */}
+                <div className='mt-6 p-4 bg-gray-700 rounded-xl'>
                     <button 
-                        type="button" 
+                        type="button"
                         onClick={() => setIsColumnPickerOpen(prev => !prev)}
-                        className='flex justify-between items-center w-full p-2 text-sm font-bold text-gray-200 rounded-lg hover:bg-gray-700 transition-colors'
+                        className='flex justify-between items-center w-full p-3 rounded-lg bg-gray-900 text-gray-100 border border-gray-600 hover:bg-gray-700 transition-colors'
+                        style={{ borderColor: isColumnPickerOpen ? accentColor : 'transparent' }}
                     >
-                        Tùy chỉnh Cột Trích Xuất (Đã chọn: {customColumnsDisplay.length} cột)
-                        <ChevronDownIcon className={`w-4 h-4 transition-transform ${isColumnPickerOpen ? 'rotate-180' : ''}`} />
+                        <span className='font-semibold'>Tùy chỉnh Cột (Đang chọn: {requiredColumnsList.length} cột)</span>
+                        <ChevronDownIcon className={`w-5 h-5 transition-transform duration-300 ${isColumnPickerOpen ? 'rotate-180' : ''}`} />
                     </button>
-
+                    
                     {isColumnPickerOpen && (
-                        <div className='mt-3 space-y-4 pt-3 border-t border-gray-600'>
-                            <p className='text-sm font-medium text-gray-300'>1. Chọn các cột phổ biến:</p>
-                            <div className='flex flex-wrap gap-4'>
-                                {Object.keys(customColumnsChecked).map(colName => (
-                                    <label key={colName} className='flex items-center space-x-2 text-gray-400 cursor-pointer'>
+                        <div className='mt-4 p-4 border border-gray-600 rounded-lg'>
+                            <h4 className='text-sm font-bold text-gray-300 mb-2'>1. Chọn các cột phổ biến:</h4>
+                            <div className='flex flex-wrap gap-4 text-sm text-gray-300 mb-4'>
+                                {['Mã học sinh', 'Tên lớp', 'Chữ ký'].map(col => (
+                                    <label key={col} className='flex items-center space-x-2'>
                                         <input
-                                            type="checkbox"
-                                            checked={customColumnsChecked[colName]}
-                                            onChange={(e) => setCustomColumnsChecked({ ...customColumnsChecked, [colName]: e.target.checked })}
-                                            className="form-checkbox h-4 w-4 rounded-md"
+                                            type='checkbox'
+                                            checked={customColumnsChecked.includes(col)}
+                                            onChange={(e) => {
+                                                if (e.target.checked) {
+                                                    setCustomColumnsChecked([...customColumnsChecked, col]);
+                                                } else {
+                                                    setCustomColumnsChecked(customColumnsChecked.filter(c => c !== col));
+                                                }
+                                            }}
+                                            className='form-checkbox rounded h-4 w-4 text-indigo-500 bg-gray-800 border-gray-600'
                                             style={{ color: accentColor }}
                                         />
-                                        <span>{colName}</span>
+                                        <span>{col}</span>
                                     </label>
                                 ))}
                             </div>
 
-                            <p className='text-sm font-medium text-gray-300 pt-2 border-t border-gray-700'>2. Thêm cột tùy thích (phân tách bằng dấu phẩy):</p>
+                            <h4 className='text-sm font-bold text-gray-300 mt-4 mb-2'>2. Thêm cột tùy thích khác:</h4>
                             <input
                                 type="text"
-                                placeholder='Ví dụ: Tên lớp, Mã HS, Chữ ký'
+                                placeholder='Ví dụ: Ngày thi, Số báo danh (phân tách bằng dấu phẩy)'
                                 value={customColumnsText}
                                 onChange={(e) => setCustomColumnsText(e.target.value)}
-                                className='w-full p-3 rounded-lg bg-gray-900 text-gray-100 border border-gray-600 focus:ring-2 focus:ring-indigo-500'
-                                style={{ borderColor: accentColor }}
+                                className='w-full p-2 rounded-lg bg-gray-900 text-gray-100 border border-gray-600 focus:ring-2 focus:ring-indigo-500'
                             />
                         </div>
                     )}
@@ -992,7 +914,7 @@ export default function App() {
                     
                     {files.length > 0 && (
                         <div className="mt-4 text-sm text-gray-300 border-l-4 p-2 rounded bg-gray-700/50" style={{ borderColor: accentColor }}>
-                            <p className="font-bold mb-1" style={{ color: accentColor }}>{files.length} File đã chọn:</p>
+                            <p className="font-bold mb-1" style={{ color: accentColor }}>{files.length} File đang xử lý:</p>
                             <ul className="list-disc list-inside max-h-24 overflow-y-auto pl-4">
                                 {files.map((file, i) => <li key={i} className="truncate">{file.name}</li>)}
                             </ul>
@@ -1037,35 +959,6 @@ export default function App() {
                 
                 {/* Bảng Kết quả */}
                 {processedResults.sortedResults.length > 0 && (
-                    <div className='mt-8 flex justify-between items-center flex-wrap gap-3'>
-                        {/* Thanh Lọc */}
-                        <div className='flex items-center space-x-3'>
-                            <button 
-                                onClick={() => setFilter('all')} 
-                                className={`text-sm px-4 py-1 rounded-lg transition-colors font-medium ${filter === 'all' ? 'bg-indigo-600 text-white shadow-md' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
-                                style={filter === 'all' ? { backgroundColor: accentColor } : {}}
-                            >
-                                Tất cả
-                            </button>
-                            <button 
-                                onClick={() => setFilter('pass')} 
-                                className={`text-sm px-4 py-1 rounded-lg transition-colors font-medium ${filter === 'pass' ? 'bg-indigo-600 text-white shadow-md' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
-                                style={filter === 'pass' ? { backgroundColor: accentColor } : {}}
-                            >
-                                Đỗ ({'>'}= 5.0)
-                            </button>
-                            <button 
-                                onClick={() => setFilter('fail')} 
-                                className={`text-sm px-4 py-1 rounded-lg transition-colors font-medium ${filter === 'fail' ? 'bg-indigo-600 text-white shadow-md' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
-                                style={filter === 'fail' ? { backgroundColor: accentColor } : {}}
-                            >
-                                Trượt ({'<'}= 4.9)
-                            </button>
-                        </div>
-                    </div>
-                )}
-                
-                {processedResults.sortedResults.length > 0 && (
                     <ResultsTable
                         results={processedResults.sortedResults}
                         editedScores={editedScores}
@@ -1077,10 +970,7 @@ export default function App() {
                 )}
             </main>
             <footer className="w-full max-w-4xl mx-auto text-center mt-6">
-                <p className="text-sm text-gray-500">
-                    User ID: <code className="font-mono text-xs text-gray-400">{userId}</code>
-                </p>
-                <p className="text-sm text-gray-500">Powered by Google Gemini</p>
+                <p className="text-sm text-gray-500">Powered by Google Gemini. Dữ liệu được lưu trữ trong Firebase Firestore.</p>
             </footer>
         </div>
     );
