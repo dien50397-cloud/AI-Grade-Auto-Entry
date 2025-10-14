@@ -1,7 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { initializeApp, getApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore, collection, query, onSnapshot, addDoc, doc, updateDoc } from 'firebase/firestore';
+// ĐÃ XÓA TẤT CẢ CÁC IMPORT CỦA FIREBASE ĐỂ KHẮC PHỤC LỖI ROLLUP
 
 // =======================================================
 // 1. TYPES & HẰNG SỐ (CONSTANTS)
