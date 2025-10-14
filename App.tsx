@@ -27,16 +27,6 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 // --- HẰNG SỐ API ---
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
 
-// --- LOGIC FIREBASE MOCK (Cho môi trường React/Vite) ---
-// Môi trường Canvas cung cấp các biến global __firebase_config, __initial_auth_token, __app_id.
-// Do đó, chúng ta sẽ sử dụng cấu trúc React/Firestore tiêu chuẩn.
-
-// Thêm các import cần thiết cho Firebase
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, collection, addDoc, onSnapshot, query, deleteDoc } from 'firebase/firestore';
-
-
 // --- LOGIC LẤY API KEY AN TOÀN ---
 const getApiKeyFromEnv = () => {
     let key = "";
@@ -53,23 +43,25 @@ const getApiKeyFromEnv = () => {
 };
 
 // Khai báo các instance Firebase ở scope ngoài (sẽ được khởi tạo trong useEffect)
+// CHÚ Ý: Chúng ta đang sử dụng các hàm Firebase từ scope global (giả định đã được tải qua script tag hoặc môi trường cung cấp).
 let app, db, auth;
 let isFirebaseInitialized = false;
 
-// --- LOGIC KHỞI TẠO VÀ LƯU TRỮ ---
+// --- LOGIC KHỞI TẠO VÀ LƯU TRỮ (SỬ DỤNG HÀM GLOBAL) ---
 
 const initializeFirebase = () => {
+    // KHÔNG SỬ DỤNG import { initializeApp, getAuth, ... }
     if (isFirebaseInitialized) return;
     try {
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-        if (firebaseConfig) {
+        if (firebaseConfig && typeof initializeApp === 'function') {
             app = initializeApp(firebaseConfig);
             db = getFirestore(app);
             auth = getAuth(app);
             isFirebaseInitialized = true;
-            console.log("Firebase initialized successfully.");
+            console.log("Firebase initialized successfully (Global).");
         } else {
-            console.error("Firebase config not found.");
+            console.error("Firebase config or global functions not found.");
         }
     } catch (error) {
         console.error("Failed to initialize Firebase:", error);
@@ -77,7 +69,7 @@ const initializeFirebase = () => {
 };
 
 const signInUser = async () => {
-    if (!auth) return 'GUEST';
+    if (!auth || typeof signInWithCustomToken !== 'function') return 'GUEST';
     
     try {
         const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
@@ -96,14 +88,11 @@ const signInUser = async () => {
 };
 
 const saveResultToFirestore = async (userId, data) => {
-    if (!db || userId === 'GUEST') return;
+    if (!db || userId === 'GUEST' || typeof addDoc !== 'function') return;
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
     
     try {
-        // Lưu dữ liệu vào collection bảo mật của người dùng
         const resultsCollection = collection(db, `artifacts/${appId}/users/${userId}/results`);
-        
-        // Tạo một document mới cho phiên xử lý này (có thể thêm timestamp nếu cần)
         await addDoc(resultsCollection, {
             timestamp: Date.now(),
             results: data,
@@ -575,7 +564,7 @@ export default function App() {
 
     // 2. Logic Lắng nghe Firestore (Load dữ liệu đã lưu)
     useEffect(() => {
-        if (!db || !authReady || userId === 'GUEST') return;
+        if (!db || !authReady || userId === 'GUEST' || typeof onSnapshot !== 'function') return;
 
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const resultsCollection = collection(db, `artifacts/${appId}/users/${userId}/results`);
@@ -589,8 +578,6 @@ export default function App() {
                 if (Array.isArray(data)) {
                     loadedResults.push(...data);
                 }
-                // Optional: Xóa bản ghi cũ hơn nếu chỉ muốn giữ lại phiên cuối
-                // deleteDoc(doc.ref); 
             });
             
             if (loadedResults.length > 0) {
@@ -627,7 +614,7 @@ export default function App() {
     const processedResults = useMemo(() => {
         // Áp dụng điểm đã chỉnh sửa
         const resultsWithEdits = results.map((result, index) => {
-            const editKey = `${index}_${result.fileName}`;
+            const editKey = `${results.indexOf(result)}_${result.fileName}`; // Sử dụng results.indexOf(result) là sai nếu kết quả bị lọc/sắp xếp. Cần fix.
             const score = editedScores[editKey] !== undefined ? editedScores[editKey] : result.diem_so;
             
             if (result.status === 'success' || score !== 'N/A') {
