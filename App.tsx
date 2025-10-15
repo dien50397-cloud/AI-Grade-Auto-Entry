@@ -29,6 +29,7 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
 
 // Các biến toàn cục cho Firebase (sẽ được khởi tạo trong useEffect)
+// CHÚ Ý: CÁC BIẾN NÀY LÀ CÁC HÀM CỤC BỘ DỰA TRÊN CÁC HÀM GLOBAL CỦA FIREBASE SDK ĐÃ ĐƯỢC LOAD
 let db = null;
 let auth = null;
 let resultsCollection = null;
@@ -457,6 +458,18 @@ export default function App() {
         // Khởi tạo Firebase
         if (typeof __firebase_config !== 'undefined' && !dbInstance) {
             const firebaseConfig = JSON.parse(__firebase_config);
+            
+            // Dùng các hàm global thay vì import để tránh lỗi Rollup Build
+            const { initializeApp, getApp } = window.firebase || {};
+            const { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } = window.firebase.auth || {};
+            const { getFirestore, collection, query, onSnapshot, addDoc, doc, updateDoc } = window.firebase.firestore || {};
+
+            if (!initializeApp || !getAuth || !getFirestore) {
+                setError("Lỗi: Firebase SDK không được tải đúng cách. Vui lòng kiểm tra index.html.");
+                return;
+            }
+
+
             try {
                  getApp(); // Kiểm tra nếu app đã được khởi tạo
             } catch (e) {
@@ -494,11 +507,13 @@ export default function App() {
         // Khởi tạo API Key an toàn
         let key = "";
         try {
+            // Cố gắng đọc từ biến môi trường Vite
             if (typeof import.meta !== 'undefined' && import.meta.env) {
                 key = import.meta.env.VITE_GEMINI_API_KEY || "";
             }
         } catch (e) {}
         
+        // Ưu tiên khóa từ Canvas (nếu có)
         if (typeof __api_key !== 'undefined') {
             key = __api_key;
         }
@@ -512,7 +527,10 @@ export default function App() {
 
     // 2. Lắng nghe dữ liệu Firestore khi userId có sẵn
     useEffect(() => {
-        if (dbInstance && userId) {
+        // Dùng các hàm global thay vì import
+        const { collection, query, onSnapshot } = window.firebase.firestore || {};
+
+        if (dbInstance && userId && collection && query && onSnapshot) {
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
             // Đường dẫn lưu trữ: /artifacts/{appId}/users/{userId}/results
             const collectionPath = `/artifacts/${appId}/users/${userId}/results`;
@@ -631,7 +649,10 @@ export default function App() {
         setEditedScores(prev => ({ ...prev, [id]: newScore }));
 
         // Sau khi chỉnh sửa, cập nhật lại Firestore (nếu đã lưu)
-        if (dbInstance && userId && id) {
+        // Dùng các hàm global thay vì import
+        const { doc, updateDoc } = window.firebase.firestore || {};
+
+        if (dbInstance && userId && id && doc && updateDoc) {
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
             const docRef = doc(dbInstance, `/artifacts/${appId}/users/${userId}/results/${id}`);
             // Chỉ cập nhật trường diem_so
@@ -640,6 +661,14 @@ export default function App() {
         }
 
     }, [dbInstance, userId]);
+
+    const handleSort = (key) => {
+        let direction = 'ascending';
+        if (sortConfig.key === key && sortConfig.direction === 'ascending') {
+            direction = 'descending';
+        }
+        setSortConfig({ key, direction });
+    };
 
     // Hàm tải về CSV (ĐÃ SỬA LỖI ĐỊNH DẠNG CSV VÀ ÁP DỤNG CỘT TÙY CHỈNH)
     const downloadCSV = useCallback((finalResults) => {
@@ -681,7 +710,10 @@ export default function App() {
     
     // Hàm xử lý chính (Auto-processing)
     const handleProcessFiles = useCallback(async (filesToProcess) => {
-        if (filesToProcess.length === 0 || !apiKey || !dbInstance || !userId) return;
+        // Dùng hàm global addDoc
+        const { addDoc } = window.firebase.firestore || {};
+
+        if (filesToProcess.length === 0 || !apiKey || !dbInstance || !userId || !addDoc) return;
         
         setIsLoading(true);
         setEditedScores({}); 
