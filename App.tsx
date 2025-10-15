@@ -460,12 +460,15 @@ export default function App() {
             const firebaseConfig = JSON.parse(__firebase_config);
             
             // Dùng các hàm global thay vì import để tránh lỗi Rollup Build
+            // Đảm bảo các hàm này có sẵn từ Firebase SDK (đã được tải qua script tag trong index.html)
             const { initializeApp, getApp } = window.firebase || {};
             const { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } = window.firebase.auth || {};
-            const { getFirestore, collection, query, onSnapshot, addDoc, doc, updateDoc } = window.firebase.firestore || {};
+            const { getFirestore } = window.firebase.firestore || {};
 
             if (!initializeApp || !getAuth || !getFirestore) {
-                setError("Lỗi: Firebase SDK không được tải đúng cách. Vui lòng kiểm tra index.html.");
+                // Chỉ hiển thị lỗi này nếu các hàm cơ bản không tồn tại
+                console.error("Lỗi: Firebase SDK không được tải đúng cách.");
+                setError("Lỗi: Firebase SDK không được tải đúng cách. Vui lòng kiểm tra index.html (Lỗi Build/Load).");
                 return;
             }
 
