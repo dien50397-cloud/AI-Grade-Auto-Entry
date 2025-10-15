@@ -428,53 +428,41 @@ export default function App() {
     
     const fileInputRef = useRef(null);
     const [dbInstance, setDbInstance] = useState(null);
-    const [userId, setUserId] = useState(null); // ID người dùng hiện tại
-    const [apiKey, setApiKey] = useState(null); // API Key từ State (an toàn)
-    const [filter, setFilter] = useState('all'); // 'all', 'pass', 'fail'
+    const [userId, setUserId] = useState(null); 
+    const [isAuthReady, setIsAuthReady] = useState(false); // Thêm biến trạng thái Auth
+    const [apiKey, setApiKey] = useState(null); 
+    const [filter, setFilter] = useState('all');
     const [sortConfig, setSortConfig] = useState({ key: 'ten_hoc_sinh', direction: 'ascending' });
     /** @type {[Object.<string, string>, React.Dispatch<React.SetStateAction<Object.<string, string>>>]} */
-    const [editedScores, setEditedScores] = useState({}); // { documentId: 'new_score' }
+    const [editedScores, setEditedScores] = useState({});
 
-
-    // Hợp nhất cột tùy chỉnh thành một danh sách duy nhất để API xử lý
+    // Hợp nhất cột tùy chỉnh (giữ nguyên logic)
     const requiredColumnsList = useMemo(() => {
         const textCols = customColumnsText.split(',').map(c => c.trim()).filter(c => c.length > 0);
         const combined = [...customColumnsChecked, ...textCols];
-        // Loại bỏ trùng lặp và các cột đã mặc định
         const unique = [...new Set(combined)].filter(c => c.toLowerCase() !== 'tên học sinh' && c.toLowerCase() !== 'điểm số');
         return unique;
     }, [customColumnsChecked, customColumnsText]);
 
-    // Lấy tên cột tùy chỉnh để hiển thị trong bảng
-    const customColumnsDisplay = useMemo(() => {
-        // Chỉ trả về các cột cần hiển thị
-        return requiredColumnsList;
-    }, [requiredColumnsList]);
+    const customColumnsDisplay = useMemo(() => requiredColumnsList, [requiredColumnsList]);
     
     // --- Hooks khởi tạo và Service Calls
 
-    // 1. Khởi tạo Firebase và Auth
+    // 1. Khởi tạo Firebase và Auth (Tối ưu hóa Khởi tạo)
     useEffect(() => {
-        // Khởi tạo Firebase
-        if (typeof __firebase_config !== 'undefined' && !dbInstance) {
+        let isCancelled = false;
+
+        // Dùng các hàm global thay vì import
+        const { initializeApp, getApp } = window.firebase || {};
+        const { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } = window.firebase.auth || {};
+        const { getFirestore } = window.firebase.firestore || {};
+
+        // --- Xử lý Auth và Firebase ---
+        if (typeof __firebase_config !== 'undefined' && initializeApp && getAuth && getFirestore && !dbInstance) {
             const firebaseConfig = JSON.parse(__firebase_config);
             
-            // Dùng các hàm global thay vì import để tránh lỗi Rollup Build
-            // Đảm bảo các hàm này có sẵn từ Firebase SDK (đã được tải qua script tag trong index.html)
-            const { initializeApp, getApp } = window.firebase || {};
-            const { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } = window.firebase.auth || {};
-            const { getFirestore } = window.firebase.firestore || {};
-
-            if (!initializeApp || !getAuth || !getFirestore) {
-                // Chỉ hiển thị lỗi này nếu các hàm cơ bản không tồn tại
-                console.error("Lỗi: Firebase SDK không được tải đúng cách.");
-                setError("Lỗi: Firebase SDK không được tải đúng cách. Vui lòng kiểm tra index.html (Lỗi Build/Load).");
-                return;
-            }
-
-
             try {
-                 getApp(); // Kiểm tra nếu app đã được khởi tạo
+                 getApp();
             } catch (e) {
                 initializeApp(firebaseConfig);
             }
@@ -482,11 +470,10 @@ export default function App() {
             auth = getAuth();
             db = getFirestore();
             setDbInstance(db);
-
-            // Xử lý đăng nhập
+            
             const handleAuth = async () => {
+                if (isCancelled) return;
                 try {
-                    // Ưu tiên token nếu có, nếu không, đăng nhập ẩn danh
                     if (typeof __initial_auth_token !== 'undefined') {
                         await signInWithCustomToken(auth, __initial_auth_token);
                     } else {
@@ -498,16 +485,23 @@ export default function App() {
             };
             
             // Theo dõi trạng thái Auth và đặt userId
-            onAuthStateChanged(auth, (user) => {
+            const unsubscribe = onAuthStateChanged(auth, (user) => {
                 if (user) {
                     setUserId(user.uid);
                 } else {
-                    handleAuth(); // Nếu chưa đăng nhập, thử đăng nhập
+                    handleAuth();
+                }
+                if (!isCancelled) {
+                    setIsAuthReady(true); // Đánh dấu Auth đã sẵn sàng
                 }
             });
+            return () => { 
+                isCancelled = true; 
+                unsubscribe();
+            };
         }
-
-        // Khởi tạo API Key an toàn
+        
+        // --- Xử lý API Key ---
         let key = "";
         try {
             // Cố gắng đọc từ biến môi trường Vite
@@ -525,38 +519,39 @@ export default function App() {
         if (!key) {
              setError("API Key chưa được thiết lập. Vui lòng kiểm tra biến môi trường.");
         }
+        // Nếu không có firebase config, coi như Auth sẵn sàng để ít nhất hiển thị lỗi API Key (nếu có)
+        if (typeof __firebase_config === 'undefined' && !isCancelled) {
+             setIsAuthReady(true);
+        }
+
     }, [dbInstance]);
 
 
     // 2. Lắng nghe dữ liệu Firestore khi userId có sẵn
     useEffect(() => {
-        // Dùng các hàm global thay vì import
         const { collection, query, onSnapshot } = window.firebase.firestore || {};
 
-        if (dbInstance && userId && collection && query && onSnapshot) {
+        if (dbInstance && userId && isAuthReady && collection && query && onSnapshot) {
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-            // Đường dẫn lưu trữ: /artifacts/{appId}/users/{userId}/results
             const collectionPath = `/artifacts/${appId}/users/${userId}/results`;
             resultsCollection = collection(dbInstance, collectionPath);
             
             const q = query(resultsCollection);
 
-            // onSnapshot để lắng nghe dữ liệu theo thời gian thực
             const unsubscribe = onSnapshot(q, (snapshot) => {
                 const loadedResults = snapshot.docs.map(doc => ({
                     ...doc.data(),
                     id: doc.id
                 }));
-                // Tải dữ liệu từ Firestore vào state Results
                 setResults(loadedResults);
             }, (error) => {
                 console.error("Lỗi lắng nghe Firestore:", error);
                 setError("Không thể tải dữ liệu đã lưu. Vui lòng kiểm tra kết nối.");
             });
 
-            return () => unsubscribe(); // Hủy lắng nghe khi component unmounts
+            return () => unsubscribe();
         }
-    }, [dbInstance, userId]);
+    }, [dbInstance, userId, isAuthReady]); 
 
     // 3. Logic API Callback (Sử dụng API Key từ State)
     const extractDataFromImageCallback = useCallback(async (imageFile) => {
@@ -569,10 +564,8 @@ export default function App() {
         // Áp dụng điểm đã chỉnh sửa
         const resultsWithEdits = results.map((result) => {
             const editKey = `${result.id}`;
-            // Ưu tiên điểm đã chỉnh sửa
             const score = editedScores[editKey] !== undefined ? editedScores[editKey] : result.diem_so;
             
-            // Chỉ tính điểm đã trích xuất thành công
             if (result.status === 'success' || (score !== 'N/A' && score !== '' && !isNaN(parseFloat(score)))) {
                  return { ...result, diem_so: score };
             }
@@ -587,26 +580,18 @@ export default function App() {
         const passRate = totalStudents > 0 ? (passCount / totalStudents * 100) : 0;
         const excellentCount = resultsWithEdits.filter(r => parseFloat(r.diem_so) >= 8.0).length;
 
-        const performanceSummary = {
-            totalStudents,
-            averageScore,
-            passCount,
-            passRate,
-            excellentCount
-        };
+        const performanceSummary = { totalStudents, averageScore, passCount, passRate, excellentCount };
 
-        // Áp dụng Lọc
+        // Lọc và Sắp xếp
         const filtered = results.filter(r => {
             const editKey = `${r.id}`;
             const score = parseFloat(editedScores[editKey] || r.diem_so || 0);
 
             if (filter === 'pass') return r.status === 'success' && score >= 5.0;
             if (filter === 'fail') return r.status === 'success' && score < 5.0;
-            
-            return true; // "all"
+            return true;
         });
 
-        // Áp dụng Sắp xếp
         const sorted = [...filtered].sort((a, b) => {
             const getScore = (result) => parseFloat(editedScores[`${result.id}`] || result.diem_so || -1);
 
@@ -626,6 +611,7 @@ export default function App() {
             }
             return sortConfig.direction === 'ascending' ? comparison : comparison * -1;
         });
+
 
         return { sortedResults: sorted, performanceSummary, successfulResults: resultsWithEdits };
 
@@ -647,18 +633,14 @@ export default function App() {
 
     // --- Handlers
 
-    // Xử lý sự kiện chỉnh sửa điểm thủ công (Cập nhật vào EditedScores)
     const handleScoreChange = useCallback((id, newScore) => {
         setEditedScores(prev => ({ ...prev, [id]: newScore }));
 
-        // Sau khi chỉnh sửa, cập nhật lại Firestore (nếu đã lưu)
-        // Dùng các hàm global thay vì import
         const { doc, updateDoc } = window.firebase.firestore || {};
 
         if (dbInstance && userId && id && doc && updateDoc) {
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
             const docRef = doc(dbInstance, `/artifacts/${appId}/users/${userId}/results/${id}`);
-            // Chỉ cập nhật trường diem_so
             updateDoc(docRef, { diem_so: newScore })
                 .catch(e => console.error("Lỗi cập nhật điểm số Firestore:", e));
         }
@@ -673,20 +655,16 @@ export default function App() {
         setSortConfig({ key, direction });
     };
 
-    // Hàm tải về CSV (ĐÃ SỬA LỖI ĐỊNH DẠNG CSV VÀ ÁP DỤNG CỘT TÙY CHỈNH)
     const downloadCSV = useCallback((finalResults) => {
         if (finalResults.length === 0) return;
 
-        // Xử lý tiêu đề cột tùy chỉnh
         const customColsHeader = requiredColumnsList.map(h => `"${h}"`).join(';');
         const headers = ['"Tên học sinh"', '"Điểm số"', customColsHeader].filter(h => h).join(';');
         
         const rows = finalResults.map(r => {
-            // Lấy điểm đã chỉnh sửa hoặc điểm gốc
             const displayScore = r.diem_so; 
             
             const fields = [`"${r.ten_hoc_sinh}"`, `"${displayScore}"`];
-            // Thêm dữ liệu tùy chỉnh từ object custom_data
             if (r.custom_data) {
                  requiredColumnsList.forEach(colName => {
                     fields.push(`"${r.custom_data[colName] || ''}"`);
@@ -697,7 +675,6 @@ export default function App() {
 
         const csvContent = [headers, ...rows].join('\n');
         
-        // Thêm BOM (Byte Order Mark) để đảm bảo hiển thị tiếng Việt có dấu trong Excel
         const blob = new Blob(['\uFEFF', csvContent], { type: 'text/csv;charset=utf-8;' });
         
         const link = document.createElement('a');
@@ -711,9 +688,7 @@ export default function App() {
     }, [requiredColumnsList]);
 
     
-    // Hàm xử lý chính (Auto-processing)
     const handleProcessFiles = useCallback(async (filesToProcess) => {
-        // Dùng hàm global addDoc
         const { addDoc } = window.firebase.firestore || {};
 
         if (filesToProcess.length === 0 || !apiKey || !dbInstance || !userId || !addDoc) return;
@@ -733,7 +708,6 @@ export default function App() {
                 const extractedData = await extractDataFromImage(file, apiKey, ['Tên học sinh', 'Điểm số', ...requiredColumnsList]);
                 
                 if (Array.isArray(extractedData) && extractedData.length > 0) {
-                    // Lưu từng kết quả trích xuất vào Firestore
                     extractedData.forEach(async (data) => {
                         const docData = {
                             status: 'success',
@@ -744,7 +718,6 @@ export default function App() {
                             createdAt: new Date().toISOString(),
                             userId: userId
                         };
-                        // AddDoc sẽ kích hoạt onSnapshot, cập nhật UI
                         await addDoc(resultsCollection, docData);
                     });
                 } else {
@@ -761,7 +734,6 @@ export default function App() {
             }
         }
 
-        // Các lỗi không lưu vào Firestore sẽ hiển thị tạm thời
         if (newResults.length > 0) {
             setResults(prev => [...newResults, ...prev]);
         }
@@ -772,7 +744,6 @@ export default function App() {
     }, [apiKey, dbInstance, userId, requiredColumnsList]);
 
 
-    // Xử lý thay đổi tệp (TỰ ĐỘNG XỬ LÝ)
     const handleFileChange = (e) => {
         if (e.target.files) {
             const newFiles = Array.from(e.target.files);
@@ -785,7 +756,6 @@ export default function App() {
         }
     };
     
-    // Xử lý kéo thả
     const handleDrop = (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -799,7 +769,6 @@ export default function App() {
         }
     };
 
-    // Xử lý sự kiện kéo (Drag events)
     const handleDrag = (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -810,13 +779,12 @@ export default function App() {
         }
     };
     
-    // Kích hoạt input file
     const onButtonClick = () => {
         fileInputRef.current?.click();
     };
 
-    // Render logic cho API Key
-    if (apiKey === null || !userId) { // Đợi cả API Key và User ID
+    // Render logic: Đợi Auth sẵn sàng và có API Key
+    if (!isAuthReady || apiKey === null) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-900 p-4">
                 <div className="max-w-md w-full bg-gray-800 p-6 rounded-xl shadow-2xl text-center border-l-4 border-indigo-500">
@@ -829,6 +797,7 @@ export default function App() {
     }
     
     if (!apiKey) {
+        // Chỉ hiện lỗi API Key sau khi Auth đã Ready
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-900 p-4">
                 <div className="max-w-md w-full bg-gray-800 p-6 rounded-xl shadow-2xl text-center border-l-4 border-red-500">
