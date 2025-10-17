@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-// ĐÃ XÓA TẤT CẢ CÁC IMPORT CỦA FIREBASE ĐỂ KHẮC PHỤC LỖI ROLLUP
+// ĐÃ XÓA TẤT CẢ CÁC IMPORT CỦA FIREBASE ĐỂ KHẮC PHỤC LỖI ROLLUP VÀ SỬ DỤNG HÀM GLOBAL
 
 // =======================================================
 // 1. TYPES & HẰNG SỐ (CONSTANTS)
@@ -12,6 +12,11 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
  * @property {string} diem_so
  * @property {object} [custom_data] Lưu trữ tất cả cột tùy chỉnh (ví dụ: { 'Mã học sinh': '123' })
  */
+interface StudentScore {
+    ten_hoc_sinh: string;
+    diem_so: string;
+    custom_data?: { [key: string]: string };
+}
 
 /**
  * Định nghĩa kiểu dữ liệu cho kết quả hiển thị
@@ -24,23 +29,28 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
  * @property {object} [custom_data]
  * @property {string} [errorMessage]
  */
+interface ExtractionResult extends StudentScore {
+    id: string;
+    status: 'success' | 'error';
+    fileName: string;
+    errorMessage?: string;
+}
 
 // KHAI BÁO CÁC HẰNG SỐ CỦA DỊCH VỤ (KHÔNG BAO GỒM API KEY)
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
 
 // Các biến toàn cục cho Firebase (sẽ được khởi tạo trong useEffect)
-// CHÚ Ý: CÁC BIẾN NÀY LÀ CÁC HÀM CỤC BỘ DỰA TRÊN CÁC HÀM GLOBAL CỦA FIREBASE SDK ĐÃ ĐƯỢC LOAD
-let db = null;
-let auth = null;
-let resultsCollection = null;
+let db: any = null;
+let auth: any = null;
+let resultsCollection: any = null;
 
 /**
  * Hàm chuyển đổi tệp hình ảnh thành định dạng Base64
  */
-const fileToGenerativePart = async (file) => {
-    const base64EncodedDataPromise = new Promise((resolve) => {
+const fileToGenerativePart = async (file: File) => {
+    const base64EncodedDataPromise = new Promise<string>((resolve) => {
         const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result.split(',')[1]);
+        reader.onloadend = () => resolve(reader.result!.toString().split(',')[1]);
         reader.readAsDataURL(file);
     });
     return {
@@ -55,12 +65,11 @@ const fileToGenerativePart = async (file) => {
  * @param {string[]} requiredColumns - Các cột tùy chỉnh cần trích xuất
  * @returns {Promise<StudentScore[]>}
  */
-const extractDataFromImage = async (imageFile, apiKey, requiredColumns) => {
+const extractDataFromImage = async (imageFile: File, apiKey: string | null, requiredColumns: string[]): Promise<StudentScore[]> => {
     if (!apiKey) {
          throw new Error("API Key chưa được thiết lập. (Lỗi Runtime)");
     }
 
-    const model = 'gemini-2.5-flash-preview-05-20';
     const imagePart = await fileToGenerativePart(imageFile);
     
     const columnsStr = requiredColumns.join(', ');
@@ -75,7 +84,7 @@ YÊU CẦU:
 4. Đảm bảo trả về chính xác các trường trong cấu trúc JSON, sử dụng tên trường là dạng snake_case (ví dụ: 'Mã học sinh' -> 'ma_hoc_sinh').`;
 
     // Định nghĩa Schema dựa trên các cột tùy chỉnh
-    const properties = {
+    const properties: { [key: string]: any } = {
         ten_hoc_sinh: { type: "STRING", description: "Họ tên đầy đủ của học sinh (đã chuẩn hóa)." },
         diem_so: { type: "STRING", description: "Điểm số cuối cùng đã chuẩn hóa về thang 10.0." }
     };
@@ -113,7 +122,7 @@ YÊU CẦU:
 
     // Áp dụng tính năng Retry (Backoff)
     const MAX_RETRIES = 3;
-    let lastError = null;
+    let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
@@ -133,14 +142,14 @@ YÊU CẦU:
                 if (!Array.isArray(parsedData)) throw new Error("Đầu ra JSON không phải là Mảng hợp lệ.");
 
                 // Xử lý và chuẩn hóa tên trường dữ liệu tùy chỉnh
-                const standardizedData = parsedData.map(item => {
-                    const newItem = { ten_hoc_sinh: item.ten_hoc_sinh, diem_so: item.diem_so, custom_data: {} };
+                const standardizedData: StudentScore[] = parsedData.map((item: any) => {
+                    const newItem: StudentScore = { ten_hoc_sinh: item.ten_hoc_sinh, diem_so: item.diem_so, custom_data: {} };
                     Object.keys(item).forEach(key => {
                         const originalColumnName = requiredColumns.find(col => col.toLowerCase().replace(/\s/g, '_') === key);
                         
                         // Lưu dữ liệu tùy chỉnh vào đối tượng custom_data
                         if (originalColumnName && key !== 'ten_hoc_sinh' && key !== 'diem_so') {
-                            newItem.custom_data[originalColumnName] = item[key];
+                            newItem.custom_data![originalColumnName] = item[key];
                         }
                     });
                     return newItem;
@@ -157,23 +166,25 @@ YÊU CẦU:
             }
 
         } catch (e) {
-            if (e.message.includes('Retrying')) {
-                lastError = e;
+            const error = e as Error;
+            if (error.message.includes('Retrying')) {
+                lastError = error;
                 continue;
             }
-            throw new Error(`Lỗi mạng hoặc cú pháp: ${e.message}`);
+            throw new Error(`Lỗi mạng hoặc cú pháp: ${error.message}`);
         }
     }
 
     if (lastError) {
         throw new Error(`API đã thất bại sau ${MAX_RETRIES} lần thử. ${lastError.message}`);
     }
+    return []; // Should be unreachable
 };
 
 /**
  * Hàm gọi AI lần 2 để lấy nhận xét (feedback)
  */
-const getAiFeedback = async (apiKey, successfulResults, performanceSummary) => {
+const getAiFeedback = async (apiKey: string | null, successfulResults: ExtractionResult[], performanceSummary: any) => {
     if (!apiKey || successfulResults.length === 0) return null;
 
     const dataSnapshot = successfulResults.map(r => ({
@@ -203,31 +214,31 @@ const getAiFeedback = async (apiKey, successfulResults, performanceSummary) => {
 // 2. ICON COMPONENTS
 // =======================================================
 
-const UploadIcon = (props) => (
+const UploadIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
     <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-upload">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" x2="12" y1="3" y2="15" />
     </svg>
 );
 
-const SpinnerIcon = (props) => (
+const SpinnerIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
     <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-loader-2 animate-spin">
         <path d="M21 12a9 9 0 1 1-6.219-8.56" />
     </svg>
 );
 
-const CsvIcon = (props) => (
+const CsvIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
     <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-file-text">
         <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v4a2 2 0 0 0 2 2h4" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" />
     </svg>
 );
 
-const InfoIcon = (props) => (
+const InfoIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
     <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-info">
         <circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" />
     </svg>
 );
 
-const ChevronDownIcon = (props) => (
+const ChevronDownIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
     <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-chevron-down">
         <path d="m6 9 6 6 6-6" />
     </svg>
@@ -238,7 +249,15 @@ const ChevronDownIcon = (props) => (
 // 3. RESULTS TABLE COMPONENTS (Đã hợp nhất Logic)
 // =======================================================
 
-const PerformanceSummary = ({ summary, accentColor }) => {
+interface PerformanceSummaryProps {
+    totalStudents: number;
+    averageScore: number;
+    passCount: number;
+    passRate: number;
+    excellentCount: number;
+}
+
+const PerformanceSummary: React.FC<{ summary: PerformanceSummaryProps, accentColor: string }> = ({ summary, accentColor }) => {
     const data = [
         { label: "Tổng số học sinh", value: summary.totalStudents },
         { label: "Điểm trung bình lớp", value: `${summary.averageScore.toFixed(2)} / 10.0`, color: summary.averageScore >= 5.0 ? 'text-green-400' : 'text-red-400' },
@@ -258,10 +277,10 @@ const PerformanceSummary = ({ summary, accentColor }) => {
     );
 };
 
-const AiFeedbackBox = ({ feedback, accentColor, isLoading }) => {
-    if (!feedback) return null;
+const AiFeedbackBox: React.FC<{ feedback: string | null, accentColor: string, isLoading: boolean }> = ({ feedback, accentColor, isLoading }) => {
+    if (!feedback && !isLoading) return null;
 
-    const isWarning = feedback.toLowerCase().includes('bất thường') || feedback.toLowerCase().includes('cảnh báo');
+    const isWarning = feedback && (feedback.toLowerCase().includes('bất thường') || feedback.toLowerCase().includes('cảnh báo'));
 
     return (
         <div className="mt-6 p-4 rounded-xl shadow-lg border-l-4"
@@ -286,7 +305,16 @@ const AiFeedbackBox = ({ feedback, accentColor, isLoading }) => {
 /**
  * Component hiển thị bảng kết quả (Bao gồm chức năng Chỉnh sửa Inline)
  */
-const ResultsTable = ({ results, editedScores, onScoreChange, onSort, sortConfig, customColumnsDisplay }) => {
+interface ResultsTableProps {
+    results: ExtractionResult[];
+    editedScores: { [key: string]: string };
+    onScoreChange: (id: string, newScore: string) => void;
+    onSort: (key: 'ten_hoc_sinh' | 'diem_so') => void;
+    sortConfig: { key: string, direction: 'ascending' | 'descending' };
+    customColumnsDisplay: string[];
+}
+
+const ResultsTable: React.FC<ResultsTableProps> = ({ results, editedScores, onScoreChange, onSort, sortConfig, customColumnsDisplay }) => {
     
     // Tạo tiêu đề động cho bảng
     const headers = [
@@ -305,7 +333,7 @@ const ResultsTable = ({ results, editedScores, onScoreChange, onSort, sortConfig
 
     headers.push({ key: 'diem_so', label: 'Điểm số (Thang 10)', sortable: true });
 
-    const getSortIndicator = (key) => {
+    const getSortIndicator = (key: string) => {
         if (sortConfig.key === key) {
             return sortConfig.direction === 'ascending' ? ' ▲' : ' ▼';
         }
@@ -324,7 +352,7 @@ const ResultsTable = ({ results, editedScores, onScoreChange, onSort, sortConfig
                             <th 
                                 key={header.key} 
                                 className={`px-4 py-3 text-left text-xs font-bold text-gray-300 uppercase tracking-wider ${header.sortable ? 'cursor-pointer hover:bg-gray-500 transition-colors' : ''}`}
-                                onClick={() => header.sortable && onSort(header.key)}
+                                onClick={() => header.sortable && onSort(header.key as 'ten_hoc_sinh' | 'diem_so')}
                                 style={{ width: header.key === 'diem_so' ? '120px' : header.key === 'status' ? '100px' : 'auto' }}
                             >
                                 {header.label}
@@ -390,51 +418,53 @@ const ResultsTable = ({ results, editedScores, onScoreChange, onSort, sortConfig
 export default function App() {
     // --- States
     /** @type {[File[], React.Dispatch<React.SetStateAction<File[]>>]} */
-    const [files, setFiles] = useState([]);
+    const [files, setFiles] = useState<File[]>([]);
     /** @type {[ExtractionResult[], React.Dispatch<React.SetStateAction<ExtractionResult[]>>]} */
-    const [results, setResults] = useState([]);
+    const [results, setResults] = useState<ExtractionResult[]>([]);
     const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState(null);
+    const [error, setError] = useState<string | null>(null);
     const [dragActive, setDragActive] = useState(false);
     const [processingStatus, setProcessingStatus] = useState('');
-    const [aiFeedback, setAiFeedback] = useState(null);
+    const [aiFeedback, setAiFeedback] = useState<string | null>(null);
     const [isAiFeedbackLoading, setIsAiFeedbackLoading] = useState(false);
     
     // --- States Cấu hình (Lưu trữ và Khôi phục)
-    const getInitialConfig = (key, defaultValue) => {
+    const getInitialConfig = (key: string, defaultValue: any): any => {
         try {
             const saved = localStorage.getItem(key);
-            return saved !== null ? (key.includes('Checked') ? JSON.parse(saved) : saved) : defaultValue;
+            if (saved !== null) {
+                return key.includes('Checked') ? JSON.parse(saved) : saved;
+            }
+            return defaultValue;
         } catch (e) {
             return defaultValue;
         }
     };
     
     // Cấu hình (lưu trong localStorage)
-    const [accentColor, setAccentColorState] = useState(getInitialConfig('accentColor', '#4f46e5')); 
-    const [customColumnsChecked, setCustomColumnsCheckedState] = useState(getInitialConfig('customColumnsChecked', ['Mã học sinh'])); 
-    const [customColumnsText, setCustomColumnsTextState] = useState(getInitialConfig('customColumnsText', '')); 
+    const [accentColor, setAccentColorState] = useState<string>(getInitialConfig('accentColor', '#4f46e5')); 
+    const [customColumnsChecked, setCustomColumnsCheckedState] = useState<string[]>(getInitialConfig('customColumnsChecked', ['Mã học sinh'])); 
+    const [customColumnsText, setCustomColumnsTextState] = useState<string>(getInitialConfig('customColumnsText', '')); 
     const [isColumnPickerOpen, setIsColumnPickerOpen] = useState(false);
     
-    const setConfigState = (key, value, setter) => {
+    const setConfigState = (key: string, value: any, setter: React.Dispatch<React.SetStateAction<any>>) => {
         setter(value);
         try { localStorage.setItem(key, typeof value === 'object' ? JSON.stringify(value) : value); } catch (e) {}
     };
 
-    const setAccentColor = (newColor) => setConfigState('accentColor', newColor, setAccentColorState);
-    const setCustomColumnsChecked = (newChecked) => setConfigState('customColumnsChecked', newChecked, setCustomColumnsCheckedState);
-    const setCustomColumnsText = (newText) => setConfigState('customColumnsText', newText, setCustomColumnsTextState);
+    const setAccentColor = (newColor: string) => setConfigState('accentColor', newColor, setAccentColorState);
+    const setCustomColumnsChecked = (newChecked: string[]) => setConfigState('customColumnsChecked', newChecked, setCustomColumnsCheckedState);
+    const setCustomColumnsText = (newText: string) => setConfigState('customColumnsText', newText, setCustomColumnsTextState);
 
     
-    const fileInputRef = useRef(null);
-    const [dbInstance, setDbInstance] = useState(null);
-    const [userId, setUserId] = useState(null); 
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [dbInstance, setDbInstance] = useState<any>(null);
+    const [userId, setUserId] = useState<string | null>(null); 
     const [isAuthReady, setIsAuthReady] = useState(false); // Thêm biến trạng thái Auth
-    const [apiKey, setApiKey] = useState(null); 
+    const [apiKey, setApiKey] = useState<string | null>(null); 
     const [filter, setFilter] = useState('all');
-    const [sortConfig, setSortConfig] = useState({ key: 'ten_hoc_sinh', direction: 'ascending' });
-    /** @type {[Object.<string, string>, React.Dispatch<React.SetStateAction<Object.<string, string>>>]} */
-    const [editedScores, setEditedScores] = useState({});
+    const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'ascending' | 'descending' }>({ key: 'ten_hoc_sinh', direction: 'ascending' });
+    const [editedScores, setEditedScores] = useState<{ [key: string]: string }>({});
 
     // Hợp nhất cột tùy chỉnh (giữ nguyên logic)
     const requiredColumnsList = useMemo(() => {
@@ -453,13 +483,17 @@ export default function App() {
         let isCancelled = false;
 
         // Dùng các hàm global thay vì import
-        const { initializeApp, getApp } = window.firebase || {};
-        const { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } = window.firebase.auth || {};
-        const { getFirestore } = window.firebase.firestore || {};
+        const firebase: any = (window as any).firebase || {};
+        const { initializeApp, getApp } = firebase;
+        const authModule = firebase.auth || {};
+        const firestoreModule = firebase.firestore || {};
+
+        const { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } = authModule;
+        const { getFirestore } = firestoreModule;
 
         // --- Xử lý Auth và Firebase ---
-        if (typeof __firebase_config !== 'undefined' && initializeApp && getAuth && getFirestore && !dbInstance) {
-            const firebaseConfig = JSON.parse(__firebase_config);
+        if (typeof (window as any).__firebase_config !== 'undefined' && initializeApp && getAuth && getFirestore && !dbInstance) {
+            const firebaseConfig = JSON.parse((window as any).__firebase_config);
             
             try {
                  getApp();
@@ -474,8 +508,8 @@ export default function App() {
             const handleAuth = async () => {
                 if (isCancelled) return;
                 try {
-                    if (typeof __initial_auth_token !== 'undefined') {
-                        await signInWithCustomToken(auth, __initial_auth_token);
+                    if (typeof (window as any).__initial_auth_token !== 'undefined') {
+                        await signInWithCustomToken(auth, (window as any).__initial_auth_token);
                     } else {
                         await signInAnonymously(auth);
                     }
@@ -485,7 +519,7 @@ export default function App() {
             };
             
             // Theo dõi trạng thái Auth và đặt userId
-            const unsubscribe = onAuthStateChanged(auth, (user) => {
+            const unsubscribe = onAuthStateChanged(auth, (user: any) => {
                 if (user) {
                     setUserId(user.uid);
                 } else {
@@ -502,7 +536,7 @@ export default function App() {
         }
         
         // --- Xử lý API Key ---
-        let key = "";
+        let key: string = "";
         try {
             // Cố gắng đọc từ biến môi trường Vite
             if (typeof import.meta !== 'undefined' && import.meta.env) {
@@ -511,8 +545,8 @@ export default function App() {
         } catch (e) {}
         
         // Ưu tiên khóa từ Canvas (nếu có)
-        if (typeof __api_key !== 'undefined') {
-            key = __api_key;
+        if (typeof (window as any).__api_key !== 'undefined') {
+            key = (window as any).__api_key;
         }
         
         setApiKey(key);
@@ -520,8 +554,8 @@ export default function App() {
              setError("API Key chưa được thiết lập. Vui lòng kiểm tra biến môi trường.");
         }
         // Nếu không có firebase config, coi như Auth sẵn sàng để ít nhất hiển thị lỗi API Key (nếu có)
-        if (typeof __firebase_config === 'undefined' && !isCancelled) {
-             setIsAuthReady(true);
+        if (typeof (window as any).__firebase_config === 'undefined' && !isCancelled) {
+            setIsAuthReady(true);
         }
 
     }, [dbInstance]);
@@ -529,22 +563,23 @@ export default function App() {
 
     // 2. Lắng nghe dữ liệu Firestore khi userId có sẵn
     useEffect(() => {
-        const { collection, query, onSnapshot } = window.firebase.firestore || {};
+        const firestoreModule: any = (window as any).firebase ? (window as any).firebase.firestore : {};
+        const { collection, query, onSnapshot } = firestoreModule;
 
         if (dbInstance && userId && isAuthReady && collection && query && onSnapshot) {
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const appId = typeof (window as any).__app_id !== 'undefined' ? (window as any).__app_id : 'default-app-id';
             const collectionPath = `/artifacts/${appId}/users/${userId}/results`;
             resultsCollection = collection(dbInstance, collectionPath);
             
             const q = query(resultsCollection);
 
-            const unsubscribe = onSnapshot(q, (snapshot) => {
-                const loadedResults = snapshot.docs.map(doc => ({
+            const unsubscribe = onSnapshot(q, (snapshot: any) => {
+                const loadedResults: ExtractionResult[] = snapshot.docs.map((doc: any) => ({
                     ...doc.data(),
                     id: doc.id
                 }));
                 setResults(loadedResults);
-            }, (error) => {
+            }, (error: any) => {
                 console.error("Lỗi lắng nghe Firestore:", error);
                 setError("Không thể tải dữ liệu đã lưu. Vui lòng kiểm tra kết nối.");
             });
@@ -554,7 +589,7 @@ export default function App() {
     }, [dbInstance, userId, isAuthReady]); 
 
     // 3. Logic API Callback (Sử dụng API Key từ State)
-    const extractDataFromImageCallback = useCallback(async (imageFile) => {
+    const extractDataFromImageCallback = useCallback(async (imageFile: File) => {
         return extractDataFromImage(imageFile, apiKey, ['Tên học sinh', 'Điểm số', ...requiredColumnsList]);
     }, [apiKey, requiredColumnsList]);
 
@@ -570,22 +605,22 @@ export default function App() {
                  return { ...result, diem_so: score };
             }
             return null;
-        }).filter(r => r !== null && r.diem_so !== 'N/A' && r.diem_so !== ''); 
+        }).filter((r): r is ExtractionResult => r !== null && r.diem_so !== 'N/A' && r.diem_so !== ''); 
 
         // Tính tóm tắt hiệu suất
         const totalStudents = resultsWithEdits.length;
-        const totalScore = resultsWithEdits.reduce((sum, r) => sum + parseFloat(r.diem_so || 0), 0);
+        const totalScore = resultsWithEdits.reduce((sum, r) => sum + parseFloat(r.diem_so || '0'), 0);
         const averageScore = totalStudents > 0 ? (totalScore / totalStudents) : 0;
         const passCount = resultsWithEdits.filter(r => parseFloat(r.diem_so) >= 5.0).length;
         const passRate = totalStudents > 0 ? (passCount / totalStudents * 100) : 0;
         const excellentCount = resultsWithEdits.filter(r => parseFloat(r.diem_so) >= 8.0).length;
 
-        const performanceSummary = { totalStudents, averageScore, passCount, passRate, excellentCount };
+        const performanceSummary: PerformanceSummaryProps = { totalStudents, averageScore, passCount, passRate, excellentCount };
 
         // Lọc và Sắp xếp
         const filtered = results.filter(r => {
             const editKey = `${r.id}`;
-            const score = parseFloat(editedScores[editKey] || r.diem_so || 0);
+            const score = parseFloat(editedScores[editKey] || r.diem_so || '0');
 
             if (filter === 'pass') return r.status === 'success' && score >= 5.0;
             if (filter === 'fail') return r.status === 'success' && score < 5.0;
@@ -593,10 +628,10 @@ export default function App() {
         });
 
         const sorted = [...filtered].sort((a, b) => {
-            const getScore = (result) => parseFloat(editedScores[`${result.id}`] || result.diem_so || -1);
+            const getScore = (result: ExtractionResult) => parseFloat(editedScores[`${result.id}`] || result.diem_so || '-1');
 
-            const aValue = a[sortConfig.key];
-            const bValue = b[sortConfig.key];
+            const aValue = (a as any)[sortConfig.key];
+            const bValue = (b as any)[sortConfig.key];
             
             let comparison = 0;
             
@@ -633,29 +668,30 @@ export default function App() {
 
     // --- Handlers
 
-    const handleScoreChange = useCallback((id, newScore) => {
+    const handleScoreChange = useCallback((id: string, newScore: string) => {
         setEditedScores(prev => ({ ...prev, [id]: newScore }));
 
-        const { doc, updateDoc } = window.firebase.firestore || {};
+        const firestoreModule: any = (window as any).firebase ? (window as any).firebase.firestore : {};
+        const { doc, updateDoc } = firestoreModule;
 
         if (dbInstance && userId && id && doc && updateDoc) {
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const appId = typeof (window as any).__app_id !== 'undefined' ? (window as any).__app_id : 'default-app-id';
             const docRef = doc(dbInstance, `/artifacts/${appId}/users/${userId}/results/${id}`);
             updateDoc(docRef, { diem_so: newScore })
-                .catch(e => console.error("Lỗi cập nhật điểm số Firestore:", e));
+                .catch((e: any) => console.error("Lỗi cập nhật điểm số Firestore:", e));
         }
 
     }, [dbInstance, userId]);
 
-    const handleSort = (key) => {
-        let direction = 'ascending';
+    const handleSort = (key: 'ten_hoc_sinh' | 'diem_so') => {
+        let direction: 'ascending' | 'descending' = 'ascending';
         if (sortConfig.key === key && sortConfig.direction === 'ascending') {
             direction = 'descending';
         }
         setSortConfig({ key, direction });
     };
 
-    const downloadCSV = useCallback((finalResults) => {
+    const downloadCSV = useCallback((finalResults: ExtractionResult[]) => {
         if (finalResults.length === 0) return;
 
         const customColsHeader = requiredColumnsList.map(h => `"${h}"`).join(';');
@@ -667,7 +703,7 @@ export default function App() {
             const fields = [`"${r.ten_hoc_sinh}"`, `"${displayScore}"`];
             if (r.custom_data) {
                  requiredColumnsList.forEach(colName => {
-                    fields.push(`"${r.custom_data[colName] || ''}"`);
+                    fields.push(`"${r.custom_data![colName] || ''}"`);
                 });
             }
             return fields.join(';');
@@ -688,8 +724,9 @@ export default function App() {
     }, [requiredColumnsList]);
 
     
-    const handleProcessFiles = useCallback(async (filesToProcess) => {
-        const { addDoc } = window.firebase.firestore || {};
+    const handleProcessFiles = useCallback(async (filesToProcess: File[]) => {
+        const firestoreModule: any = (window as any).firebase ? (window as any).firebase.firestore : {};
+        const { addDoc } = firestoreModule;
 
         if (filesToProcess.length === 0 || !apiKey || !dbInstance || !userId || !addDoc) return;
         
@@ -698,7 +735,7 @@ export default function App() {
         setError(null);
         setAiFeedback(null);
         
-        const newResults = [];
+        const newResults: ExtractionResult[] = [];
         
         for (let i = 0; i < filesToProcess.length; i++) {
             const file = filesToProcess[i];
@@ -709,6 +746,7 @@ export default function App() {
                 
                 if (Array.isArray(extractedData) && extractedData.length > 0) {
                     extractedData.forEach(async (data) => {
+                        const appId = typeof (window as any).__app_id !== 'undefined' ? (window as any).__app_id : 'default-app-id';
                         const docData = {
                             status: 'success',
                             fileName: file.name,
@@ -721,16 +759,17 @@ export default function App() {
                         await addDoc(resultsCollection, docData);
                     });
                 } else {
-                    newResults.push({ status: 'error', fileName: file.name, ten_hoc_sinh: 'N/A', diem_so: 'N/A', errorMessage: 'Không trích xuất được dữ liệu hợp lệ.' });
+                    newResults.push({ id: `temp-${Date.now()}-${i}`, status: 'error', fileName: file.name, ten_hoc_sinh: 'N/A', diem_so: 'N/A', errorMessage: 'Không trích xuất được dữ liệu hợp lệ.' });
                 }
 
             } catch (err) {
-                const errorMessage = err instanceof Error ? err.message : 'Lỗi không xác định.';
+                const error = err as Error;
+                const errorMessage = error.message || 'Lỗi không xác định.';
                 if (errorMessage.includes("API Key chưa được thiết lập")) {
                     setError(errorMessage);
                 }
                 console.error("Lỗi xử lý file:", errorMessage);
-                newResults.push({ status: 'error', fileName: file.name, ten_hoc_sinh: 'N/A', diem_so: 'N/A', errorMessage: errorMessage });
+                newResults.push({ id: `temp-${Date.now()}-${i}`, status: 'error', fileName: file.name, ten_hoc_sinh: 'N/A', diem_so: 'N/A', errorMessage: errorMessage });
             }
         }
 
@@ -744,7 +783,7 @@ export default function App() {
     }, [apiKey, dbInstance, userId, requiredColumnsList]);
 
 
-    const handleFileChange = (e) => {
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files) {
             const newFiles = Array.from(e.target.files);
             setFiles(newFiles);
@@ -756,7 +795,7 @@ export default function App() {
         }
     };
     
-    const handleDrop = (e) => {
+    const handleDrop = (e: React.DragEvent<HTMLLabelElement>) => {
         e.preventDefault();
         e.stopPropagation();
         setDragActive(false);
@@ -769,7 +808,7 @@ export default function App() {
         }
     };
 
-    const handleDrag = (e) => {
+    const handleDrag = (e: React.DragEvent<HTMLLabelElement>) => {
         e.preventDefault();
         e.stopPropagation();
         if (e.type === "dragenter" || e.type === "dragover") {
@@ -887,7 +926,7 @@ export default function App() {
 
 
                 <div className="mt-8">
-                    <form id="form-file-upload" className="relative w-full" onDragEnter={handleDrag} onSubmit={(e) => e.preventDefault()}>
+                    <form id="form-file-upload" className="relative w-full" onDragEnter={handleDrag}>
                         <input
                             ref={fileInputRef}
                             type="file"
