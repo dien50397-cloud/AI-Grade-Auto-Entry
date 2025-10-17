@@ -1,25 +1,31 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Gemini Test Score Extractor</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-<script type="importmap">
-{
-  "imports": {
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.22.0"
-  }
-}
-</script>
-<link rel="stylesheet" href="/index.css">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Trích Xuất Điểm Thi (Gemini)</title>
+    <!-- Thêm Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Sử dụng Font Inter mặc định của Google */
+        body { font-family: "Inter", sans-serif; margin: 0; padding: 0; background-color: #111827; }
+        /* Đảm bảo toàn bộ ứng dụng sử dụng màu nền tối */
+        #root { min-height: 100vh; } 
+    </style>
 </head>
-<body class="bg-slate-50 text-slate-900">
-  <div id="root"></div>
-  <script type="module" src="/index.tsx"></script>
+<body>
+    <div id="root"></div>
+
+    <!-- 
+        CÁC SCRIPT FIREBASE CẦN THIẾT (QUAN TRỌNG NHẤT)
+        Chúng ta cần các SDK này được tải vào global scope (window.firebase)
+        để App.jsx có thể gọi các hàm mà không cần 'import'.
+    -->
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"></script>
+
+    <!-- Thêm file JavaScript của ứng dụng React/Vite -->
+    <script type="module" src="/src/main.jsx"></script>
 </body>
 </html>
