@@ -7,10 +7,6 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 
 /**
  * Định nghĩa kiểu dữ liệu cho kết quả trích xuất
- * @typedef {object} StudentScore
- * @property {string} ten_hoc_sinh
- * @property {string} diem_so
- * @property {object} [custom_data] Lưu trữ tất cả cột tùy chỉnh (ví dụ: { 'Mã học sinh': '123' })
  */
 interface StudentScore {
     ten_hoc_sinh: string;
@@ -20,14 +16,6 @@ interface StudentScore {
 
 /**
  * Định nghĩa kiểu dữ liệu cho kết quả hiển thị
- * @typedef {object} ExtractionResult
- * @property {string} id - Firestore Document ID
- * @property {'success' | 'error'} status
- * @property {string} fileName
- * @property {string} ten_hoc_sinh
- * @property {string} diem_so
- * @property {object} [custom_data]
- * @property {string} [errorMessage]
  */
 interface ExtractionResult extends StudentScore {
     id: string;
@@ -60,10 +48,6 @@ const fileToGenerativePart = async (file: File) => {
 
 /**
  * Hàm gọi API Gemini để trích xuất dữ liệu (Đã tích hợp Chuẩn hóa Tên và Điểm)
- * @param {File} imageFile 
- * @param {string} apiKey - Phải được truyền từ React State
- * @param {string[]} requiredColumns - Các cột tùy chỉnh cần trích xuất
- * @returns {Promise<StudentScore[]>}
  */
 const extractDataFromImage = async (imageFile: File, apiKey: string | null, requiredColumns: string[]): Promise<StudentScore[]> => {
     if (!apiKey) {
