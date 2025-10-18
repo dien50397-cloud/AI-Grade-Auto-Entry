@@ -4,7 +4,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Trích Xuất Điểm Thi (Gemini)</title>
-    <!-- Thêm Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         /* Sử dụng Font Inter mặc định của Google */
@@ -16,15 +15,10 @@
 <body>
     <div id="root"></div>
 
-    <!-- 
-        CÁC SCRIPT FIREBASE CẦN THIẾT (QUAN TRỌNG NHẤT)
-        Tải SDK từ CDN để cấp quyền truy cập global cho App.jsx
-    -->
     <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"></script>
     <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"></script>
 
-    <!-- ĐÃ SỬA: Thay thế ./src/main.jsx bằng ./src/index.tsx để khắc phục lỗi Build Vite/Rollup -->
-    <script type="module" src="./src/index.tsx"></script> 
+    <script type="module" src="./src/App.tsx"></script> 
 </body>
 </html>
