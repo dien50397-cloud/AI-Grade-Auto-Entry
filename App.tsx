@@ -1,10 +1,15 @@
 // App.tsx
 
 import React, { useState, useCallback } from 'react';
-import { Result } from './types'; // Giả định bạn có tệp types.ts định nghĩa Result
-import { generateGradeFromImage } from './GeminiService'; // Giả định bạn có GeminiService
+import { Result } from './types'; 
+import { generateGradeFromImage } from './GeminiService'; 
 import ResultsTable from './ResultsTable';
-import { UploadIcon, ClipboardListIcon, SparklesIcon } from './icons'; // Giả định bạn có tệp icons.tsx
+
+// Component Icon giả định (Bạn cần đảm bảo chúng tồn tại trong icons.tsx hoặc thay thế)
+const UploadIcon = ({ className = '' }) => <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m0 0l6-6m-6 6l-6-6m6-6v6" /></svg>;
+const ClipboardListIcon = ({ className = '' }) => <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.25c0-1.036-.84-1.875-1.875-1.875h-8.25c-1.036 0-1.875.84-1.875 1.875v2.25m12 0c.828 0 1.5.672 1.5 1.5v3c0 .828-.672 1.5-1.5 1.5H7.5c-.828 0-1.5-.672-1.5-1.5v-3c0-.828.672-1.5 1.5-1.5m12 0a1.5 1.5 0 01-1.5 1.5h-9a1.5 1.5 0 01-1.5-1.5m12 0c.828 0 1.5.672 1.5 1.5v3c0 .828-.672 1.5-1.5 1.5H7.5c-.828 0-1.5-.672-1.5-1.5v-3c0-.828.672-1.5 1.5-1.5m0-11.25c.828 0 1.5.672 1.5 1.5v3c0 .828-.672 1.5-1.5 1.5H7.5c-.828 0-1.5-.672-1.5-1.5v-3c0-.828.672-1.5 1.5-1.5" /></svg>;
+const SparklesIcon = ({ className = '' }) => <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.102a.562.562 0 00.474.341l5.523.447a.562.562 0 01.307.912l-4.14 3.791a.562.562 0 00-.195.589l1.252 5.271a.562.562 0 01-.84.62l-4.793-2.616a.562.562 0 00-.546 0l-4.793 2.616a.562.562 0 01-.84-.62l1.253-5.271a.562.562 0 00-.195-.589l-4.14-3.791a.562.562 0 01.307-.912l5.523-.447a.562.562 0 00.474-.341l2.125-5.102z" /></svg>;
+
 
 const App: React.FC = () => {
     const [file, setFile] = useState<File | null>(null);
@@ -30,20 +35,21 @@ const App: React.FC = () => {
         setResults([]);
 
         try {
-            const data = await generateGradeFromImage(file);
+            // Gọi hàm đã export từ GeminiService.ts
+            const data = await generateGradeFromImage(file); 
             setResults(data);
         } catch (err) {
-            console.error(err);
-            setError("Lỗi xử lý. Vui lòng kiểm tra API Key hoặc định dạng tệp.");
+            console.error("Lỗi:", err);
+            setError((err as Error).message || "Đã xảy ra lỗi trong quá trình xử lý.");
         } finally {
             setLoading(false);
         }
     }, [file]);
 
     return (
-        // CONTAINER CHUNG: Nền xám nhạt, chiều cao tối thiểu đầy đủ (min-h-screen)
+        // CONTAINER CHUNG
         <div className="min-h-screen bg-gray-50 py-10 px-4 sm:px-6 lg:px-8">
-            {/* CARD NỘI DUNG: Giới hạn độ rộng, căn giữa, nền trắng, bo tròn, bóng đổ */}
+            {/* CARD NỘI DUNG */}
             <div className="max-w-4xl mx-auto bg-white shadow-2xl rounded-2xl p-6 sm:p-10">
                 
                 {/* TIÊU ĐỀ */}
@@ -58,7 +64,7 @@ const App: React.FC = () => {
                 {/* KHU VỰC UPLOAD VÀ XỬ LÝ */}
                 <div className="space-y-6">
                     
-                    {/* INPUT/UPLOAD SECTION - TẠO VÙNG KÉO THẢ GIẢ */}
+                    {/* INPUT/UPLOAD SECTION */}
                     <label 
                         className={`p-8 border-2 border-dashed rounded-xl transition duration-300 ease-in-out cursor-pointer block 
                                    ${file ? 'border-green-500 bg-green-50' : 'border-gray-300 hover:border-indigo-400 bg-gray-50'}`}
@@ -79,7 +85,7 @@ const App: React.FC = () => {
                             type="file"
                             accept="image/jpeg, image/png"
                             onChange={handleFileChange}
-                            className="sr-only" // Ẩn input mặc định
+                            className="sr-only"
                             disabled={loading}
                         />
                     </label>
