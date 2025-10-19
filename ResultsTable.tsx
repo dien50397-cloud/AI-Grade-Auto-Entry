@@ -6,7 +6,6 @@ import { Result } from './types'; // Giả định bạn có tệp types.ts
 const ResultsTable: React.FC<{ results: Result[] }> = ({ results }) => {
 
     const handleExport = () => {
-        // Hàm này có thể được phát triển thêm để xuất CSV/Excel
         alert('Chức năng xuất dữ liệu đang được phát triển!');
     };
 
@@ -25,7 +24,7 @@ const ResultsTable: React.FC<{ results: Result[] }> = ({ results }) => {
             <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200">
                     
-                    {/* ĐẦU BẢNG: Nền màu nhấn, chữ trắng */}
+                    {/* ĐẦU BẢNG */}
                     <thead className="bg-indigo-600">
                         <tr>
                             <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
@@ -40,12 +39,11 @@ const ResultsTable: React.FC<{ results: Result[] }> = ({ results }) => {
                         </tr>
                     </thead>
                     
-                    {/* THÂN BẢNG: Hàng xen kẽ màu */}
+                    {/* THÂN BẢNG */}
                     <tbody className="bg-white divide-y divide-gray-200">
                         {results.map((item, index) => (
                             <tr 
                                 key={index} 
-                                // Hàng xen kẽ màu
                                 className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50 hover:bg-gray-100 transition duration-100'}
                             >
                                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
