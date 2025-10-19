@@ -1,58 +1,69 @@
+// ResultsTable.tsx
 
 import React from 'react';
-import type { ExtractionResult } from '../types';
-import { CheckCircleIcon, XCircleIcon } from './icons';
+import { Result } from './types'; // Giả định bạn có tệp types.ts
 
-interface ResultsTableProps {
-  results: ExtractionResult[];
-}
+const ResultsTable: React.FC<{ results: Result[] }> = ({ results }) => {
 
-export const ResultsTable: React.FC<ResultsTableProps> = ({ results }) => {
-  if (results.length === 0) {
-    return null;
-  }
+    const handleExport = () => {
+        // Hàm này có thể được phát triển thêm để xuất CSV/Excel
+        alert('Chức năng xuất dữ liệu đang được phát triển!');
+    };
 
-  return (
-    <div className="w-full mt-10 flow-root">
-       <h2 className="text-xl font-semibold text-slate-800 mb-4">Extraction Results</h2>
-      <div className="-mx-4 -my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
-        <div className="inline-block min-w-full py-2 align-middle sm:px-6 lg:px-8">
-          <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 sm:rounded-lg">
-            <table className="min-w-full divide-y divide-slate-300">
-              <thead className="bg-slate-100">
-                <tr>
-                  <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-slate-900 sm:pl-6">File Name</th>
-                  <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-slate-900">Student Name</th>
-                  <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-slate-900">Score</th>
-                  <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-slate-900">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 bg-white">
-                {results.map((result, index) => (
-                  <tr key={index} className={result.status === 'error' ? 'bg-red-50' : ''}>
-                    <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-slate-900 sm:pl-6">{result.fileName}</td>
-                    <td className="whitespace-nowrap px-3 py-4 text-sm text-slate-500">{result.status === 'success' ? result.ten_hoc_sinh : 'N/A'}</td>
-                    <td className="whitespace-nowrap px-3 py-4 text-sm text-slate-500">{result.status === 'success' ? result.diem_so : 'N/A'}</td>
-                    <td className="whitespace-nowrap px-3 py-4 text-sm text-slate-500">
-                      {result.status === 'success' ? (
-                        <span className="inline-flex items-center rounded-md bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
-                          <CheckCircleIcon className="h-4 w-4 mr-1.5 text-green-500" />
-                          Success
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center rounded-md bg-red-100 px-2 py-1 text-xs font-medium text-red-700" title={result.errorMessage}>
-                          <XCircleIcon className="h-4 w-4 mr-1.5 text-red-500" />
-                          Error
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+    return (
+        <div className="shadow-2xl overflow-hidden rounded-xl border border-gray-200">
+            {/* Nút Export */}
+            <div className="flex justify-end p-3 bg-gray-50 border-b">
+                 <button
+                    onClick={handleExport}
+                    className="flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-green-600 hover:bg-green-700 shadow-md transition duration-150"
+                 >
+                    Xuất CSV
+                 </button>
+            </div>
+
+            <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                    
+                    {/* ĐẦU BẢNG: Nền màu nhấn, chữ trắng */}
+                    <thead className="bg-indigo-600">
+                        <tr>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
+                                Tên Học Sinh
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
+                                Môn Học
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
+                                Điểm Cuối Cùng
+                            </th>
+                        </tr>
+                    </thead>
+                    
+                    {/* THÂN BẢNG: Hàng xen kẽ màu */}
+                    <tbody className="bg-white divide-y divide-gray-200">
+                        {results.map((item, index) => (
+                            <tr 
+                                key={index} 
+                                // Hàng xen kẽ màu
+                                className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50 hover:bg-gray-100 transition duration-100'}
+                            >
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                    {item.student_name}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                    {item.subject}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-lg font-extrabold text-indigo-700">
+                                    {item.final_score}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
         </div>
-      </div>
-    </div>
-  );
+    );
 };
+
+export default ResultsTable;
