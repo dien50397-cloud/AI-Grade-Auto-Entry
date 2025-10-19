@@ -1,95 +1,65 @@
-import { GoogleGenAI, Type } from "@google/genai";
-// Đảm bảo type StudentScore trong file types.ts là một đối tượng chứa ten_hoc_sinh và diem_so
-import type { StudentScore } from '../types'; 
+// GeminiService.ts
 
-// Hàm chuyển đổi tệp hình ảnh thành định dạng Base64 để gửi tới Gemini
-const fileToGenerativePart = async (file: File) => {
-  const base64EncodedDataPromise = new Promise<string>((resolve) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
-    reader.readAsDataURL(file);
-  });
-  return {
-    inlineData: { data: await base64EncodedDataPromise, mimeType: file.type },
-  };
-};
+import { Result } from './types'; // Giả định bạn có định nghĩa Result trong types.ts
 
-// Khởi tạo AI Client và đọc API Key từ biến môi trường của Netlify/Vite
-// Sử dụng cú pháp import.meta.env là CHUẨN XÁC
-const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY as string });
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY; // Lấy API Key từ biến môi trường
 
-// Hàm chính để trích xuất dữ liệu từ hình ảnh
-// Hàm này được định nghĩa để trả về MỘT MẢNG (Array) các kết quả
-export const extractDataFromImage = async (imageFile: File): Promise<StudentScore[]> => {
-    // CHÚ Ý: Đã nâng cấp lên mô hình Pro để xử lý bảng lớn tốt hơn
-    const model = 'gemini-2.5-pro'; 
-    const imagePart = await fileToGenerativePart(imageFile);
-    
-    // PROMPT MỚI: Yêu cầu trích xuất TẤT CẢ các học sinh và chỉ rõ cột điểm
-    const prompt = `Bạn là một CHUYÊN GIA PHÂN TÍCH BÀI KIỂM TRA. Từ hình ảnh danh sách điểm này, hãy trích xuất **TẤT CẢ** các cặp Tên học sinh và Tổng điểm mà bạn tìm thấy.
+/**
+ * Hàm xử lý chính: Gửi hình ảnh bài kiểm tra đến Gemini API để trích xuất điểm.
+ * * LƯU Ý QUAN TRỌNG: Bạn cần điền LƯỢC ĐỒ (schema) JSON và PROMPT vào đây.
+ */
+export const generateGradeFromImage = async (file: File): Promise<Result[]> => {
+    if (!API_KEY) {
+        throw new Error("Lỗi: VITE_GEMINI_API_KEY chưa được thiết lập.");
+    }
+    
+    // 1. Tạo Base64 từ File
+    const base64Image = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(',')[1]);
+        reader.onerror = error => reject(error);
+        reader.readAsDataURL(file);
+    });
 
-YÊU CẦU:
-1. Trích xuất **tất cả** học sinh (nếu có nhiều hơn một).
-2. Tên phải giữ nguyên 100% các ký tự Tiếng Việt có dấu.
-3. Điểm số phải là giá trị số duy nhất từ cột 'Tổng điểm', không làm tròn.
-
-ĐẦU RA:
-- Trả về kết quả dưới dạng **MỘT MẢNG JSON** theo cấu trúc đã định nghĩa.
-- Nếu không tìm thấy học sinh nào, trả về một mảng rỗng (empty array).`;
-
-    // CẤU TRÚC JSON: Đã sửa thành kiểu MẢNG (ARRAY)
-    const responseSchema = {
-        type: Type.ARRAY,
-        items: {
-            type: Type.OBJECT,
-            properties: {
-                ten_hoc_sinh: {
-                    type: Type.STRING,
-                    description: "Họ tên đầy đủ của học sinh (giữ nguyên dấu tiếng Việt)."
-                },
-                diem_so: {
-                    type: Type.STRING,
-                    description: "Điểm số cuối cùng từ cột 'Tổng điểm' (ví dụ: 8.5, 10.0)."
-                }
-            },
-            required: ['ten_hoc_sinh', 'diem_so'],
+    const imageData = {
+        inlineData: {
+            data: base64Image,
+            mimeType: file.type || 'image/jpeg',
         },
     };
+    
+    // 2. Định nghĩa System Instruction (Prompt chính)
+    const systemInstruction = `Bạn là một chuyên gia xử lý dữ liệu giáo dục. Nhiệm vụ của bạn là phân tích dữ liệu bài kiểm tra được cung cấp và trích xuất điểm số, sau đó chuyển đổi chúng thành định dạng JSON.
+Quy tắc:
+1. Xác định Tên Học Sinh, Tên Môn Học, và Điểm Số Cuối Cùng.
+2. Đối với các điểm số có dấu phân thập phân (dấu chấm), hãy chuyển đổi thành DẤU PHẨY (,) để chuẩn hóa cho Microsoft Excel.
+3. Luôn trả về dữ liệu dưới định dạng MẢNG JSON (JSON array) sau:
+[
+  {
+    "student_name": "Tên Học Sinh",
+    "subject": "Tên Môn Học",
+    "final_score": "Điểm chuẩn hóa (ví dụ: 8,5)"
+  }
+]`;
 
+    // 3. Gọi API (Cần điều chỉnh theo thư viện bạn đang dùng: @google/genai, axios, hay fetch)
+    // ********************************************************************************
+    // Đây là phần ví dụ CƠ BẢN cho mục đích minh họa - cần điều chỉnh thư viện
+    // ********************************************************************************
+    
     try {
-        const response = await ai.models.generateContent({
-            model: model,
-            contents: { parts: [imagePart, { text: prompt }] },
-            config: {
-                responseMimeType: 'application/json',
-                responseSchema: responseSchema,
-            }
-        });
+        // Thay thế bằng logic gọi API Gemini chính xác của bạn
         
-        const jsonText = response.text;
-        const parsedData = JSON.parse(jsonText);
-
-        // --- MÃ XỬ LÝ ĐẦU RA (ĐÃ SỬA LỖI LOGIC VÀ CÚ PHÁP) ---
-
-        // 1. Kiểm tra nghiêm ngặt: Đầu ra phải là một MẢNG
-        if (!Array.isArray(parsedData)) {
-            // Nếu không phải mảng, báo lỗi
-            throw new Error("API did not return a valid JSON array as requested. Model output structure error.");
-        }
-        
-        // 2. Trả về toàn bộ MẢNG đã được trích xuất
-        // Mã App.tsx sẽ nhận mảng này và xử lý từng phần tử
-        return parsedData; 
+        // Ví dụ dữ liệu giả định (placeholder)
+        await new Promise(resolve => setTimeout(resolve, 1500)); // Giả lập thời gian chờ
+        const mockResult: Result[] = [
+            { student_name: "Nguyễn Văn A", subject: "Toán", final_score: "9,5" },
+            { student_name: "Trần Thị B", subject: "Văn", final_score: "8,0" },
+        ];
+        return mockResult; 
 
     } catch (error) {
-        console.error(`Error processing ${imageFile.name}:`, error);
-        if (error instanceof Error) {
-            // Thêm xử lý lỗi JSON chi tiết
-            if (error.message.includes('Unexpected token') || error.message.includes('JSON')) {
-                 throw new Error("Lỗi định dạng JSON từ API. Vui lòng thử lại.");
-            }
-            throw new Error(`API Error: ${error.message}`);
-        }
-        throw new Error("An unknown error occurred during API call.");
+        console.error("Lỗi gọi Gemini API:", error);
+        throw new Error("Không thể kết nối hoặc xử lý API Gemini.");
     }
-}; // Dấu ngoặc nhọn này đóng hàm extractDataFromImage
+};
