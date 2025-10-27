@@ -1,14 +1,11 @@
 // App.tsx
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react'; // Import useMemo
 import { Result } from './types'; 
 import { generateGradeFromImage } from './GeminiService'; 
 import ResultsTable from './ResultsTable';
-
-// Component Icon giả định (dùng lại từ trước)
-const UploadIcon = ({ className = '' }) => <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m0 0l6-6m-6 6l-6-6m6-6v6" /></svg>;
-const ClipboardListIcon = ({ className = '' }) => <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.25c0-1.036-.84-1.875-1.875-1.875h-8.25c-1.036 0-1.875.84-1.875 1.875v2.25m12 0c.828 0 1.5.672 1.5 1.5v3c0 .828-.672 1.5-1.5 1.5H7.5c-.828 0-1.5-.672-1.5-1.5v-3c0-.828.672-1.5 1.5-1.5m12 0a1.5 1.5 0 01-1.5 1.5h-9a1.5 1.5 0 01-1.5-1.5m12 0c.828 0 1.5.672 1.5 1.5v3c0 .828-.672 1.5-1.5 1.5H7.5c-.828 0-1.5-.672-1.5-1.5v-3c0-.828.672-1.5 1.5-1.5m0-11.25c.828 0 1.5.672 1.5 1.5v3c0 .828-.672 1.5-1.5 1.5H7.5c-.828 0-1.5-.672-1.5-1.5v-3c0-.828.672-1.5 1.5-1.5" /></svg>;
-const SparklesIcon = ({ className = '' }) => <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.102a.562.562 0 00.474.341l5.523.447a.562.562 0 01.307.912l-4.14 3.791a.562.562 0 00-.195.589l1.252 5.271a.562.562 0 01-.84.62l-4.793-2.616a.562.562 0 00-.546 0l-4.793 2.616a.562.562 0 01-.84-.62l1.253-5.271a.562.562 0 00-.195-.589l-4.14-3.791a.562.562 0 01.307-.912l5.523-.447a.562.562 0 00.474-.341l2.125-5.102z" /></svg>;
+// NHẬP CÁC ICON TỪ TỆP icons.tsx, thêm SpinnerIcon cho trạng thái loading
+import { UploadIcon, ClipboardListIcon, SparklesIcon, SpinnerIcon } from './icons'; 
 
 
 const App: React.FC = () => {
@@ -17,10 +14,23 @@ const App: React.FC = () => {
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
 
+    // Tạo URL xem trước cho hình ảnh đã chọn và dọn dẹp khi tệp thay đổi
+    const filePreviewUrl = useMemo(() => {
+        if (file) {
+            return URL.createObjectURL(file);
+        }
+        return null;
+    }, [file]);
+
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
+            // Dọn dẹp URL cũ trước khi tạo URL mới
+            if (filePreviewUrl) {
+                URL.revokeObjectURL(filePreviewUrl); 
+            }
             setFile(e.target.files[0]);
             setError(null);
+            setResults([]); // Xóa kết quả cũ khi chọn tệp mới
         }
     };
 
@@ -42,74 +52,116 @@ const App: React.FC = () => {
             setError((err as Error).message || "Đã xảy ra lỗi trong quá trình xử lý.");
         } finally {
             setLoading(false);
+            // Không cần revokeObjectURL ở đây vì nó được xử lý bởi useMemo/handleFileChange
         }
-    }, [file]);
+    }, [file]); // Loại bỏ filePreviewUrl khỏi dependency array để tránh lỗi.
+
+    // Dọn dẹp URL khi component unmount
+    React.useEffect(() => {
+        return () => {
+            if (filePreviewUrl) {
+                URL.revokeObjectURL(filePreviewUrl);
+            }
+        };
+    }, [filePreviewUrl]);
+
 
     return (
-        // CONTAINER CHUNG: Thay thế nền xám bằng màu trắng (màu gốc) hoặc xanh nhạt
-        <div className="min-h-screen bg-white py-8 px-4 sm:px-6 lg:px-8">
-            {/* CARD NỘI DUNG: Giữ lại shadow và bo tròn nhẹ */}
-            <div className="max-w-3xl mx-auto bg-white shadow-xl rounded-lg p-6 sm:p-8 border border-gray-200">
+        // CONTAINER CHUNG: Thay thế nền trắng bằng màu xanh nhạt nhẹ (sky-50) để làm nổi bật card nội dung, tăng padding
+        <div className="min-h-screen bg-sky-50 py-12 px-4 sm:px-6 lg:px-8">
+            {/* CARD NỘI DUNG: Nâng cao shadow và bo tròn, mở rộng max-w */}
+            <div className="max-w-4xl mx-auto bg-white shadow-2xl rounded-xl p-8 sm:p-10 border border-gray-100">
                 
-                {/* TIÊU ĐỀ: Màu Deep Blue */}
-                <h1 className="text-3xl font-bold text-blue-800 text-center mb-6 flex items-center justify-center">
-                    <SparklesIcon className="w-7 h-7 mr-2 text-blue-600" />
+                {/* TIÊU ĐỀ: Màu Deep Blue, căn giữa, font lớn hơn, thêm hiệu ứng nhẹ */}
+                <h1 className="text-4xl font-extrabold text-blue-800 text-center mb-2 flex items-center justify-center">
+                    <SparklesIcon className="w-8 h-8 mr-2 text-blue-600 animate-pulse" />
                     AI Grade Auto Entry
                 </h1>
-                <p className="text-center text-gray-600 mb-8">
+                <p className="text-center text-gray-500 mb-10 text-lg">
                     Hệ thống tự động trích xuất và nhập điểm từ bài kiểm tra.
                 </p>
 
                 {/* KHU VỰC UPLOAD VÀ XỬ LÝ */}
-                <div className="space-y-6">
+                <div className="space-y-8">
                     
-                    {/* INPUT/UPLOAD SECTION - Vùng chọn tệp */}
-                    <label 
-                        className={`p-6 border-2 border-dashed rounded-lg transition duration-300 cursor-pointer block 
-                                   ${file ? 'border-blue-600 bg-blue-50' : 'border-gray-400 hover:border-blue-500 bg-gray-50'}`}
-                        htmlFor="file-upload"
-                    >
-                        <div className="text-center">
-                            <UploadIcon className={`mx-auto w-10 h-10 ${file ? 'text-blue-700' : 'text-gray-500'}`} />
-                            
-                            <p className="mt-2 text-sm font-medium text-gray-900">
-                                {file ? `Tệp đã chọn: ${file.name}` : "Chọn hoặc kéo thả tệp bài kiểm tra (JPEG/PNG)"}
-                            </p>
+                    {/* INPUT/UPLOAD SECTION - Cải thiện giao diện responsive và trực quan */}
+                    <div className="flex flex-col md:flex-row gap-6">
+                         {/* Vùng xem trước tệp */}
+                        <div className="w-full md:w-1/3 flex-shrink-0 bg-gray-100 rounded-xl p-4 flex items-center justify-center border-2 border-dashed border-gray-300">
+                            {filePreviewUrl ? (
+                                <img 
+                                    src={filePreviewUrl} 
+                                    alt="File Preview" 
+                                    className="max-h-52 object-contain rounded-md"
+                                />
+                            ) : (
+                                <div className="text-center text-gray-500 py-10">
+                                    <UploadIcon className="mx-auto w-10 h-10 mb-2" />
+                                    <p>Chưa chọn tệp</p>
+                                </div>
+                            )}
                         </div>
-                        <input
-                            id="file-upload"
-                            type="file"
-                            accept="image/jpeg, image/png"
-                            onChange={handleFileChange}
-                            className="sr-only"
-                            disabled={loading}
-                        />
-                    </label>
 
-                    {/* NÚT XỬ LÝ: Màu Deep Blue */}
+                        {/* Vùng Upload chính (Label) */}
+                        <label 
+                            className={`w-full md:w-2/3 p-6 border-2 border-dashed rounded-xl transition duration-300 cursor-pointer block 
+                                       ${file 
+                                           ? 'border-blue-600 bg-blue-50' 
+                                           : 'border-gray-400 hover:border-blue-500 hover:bg-gray-100 bg-white'
+                                       }`}
+                            htmlFor="file-upload"
+                        >
+                            <div className="text-center">
+                                <UploadIcon className={`mx-auto w-12 h-12 ${file ? 'text-blue-700' : 'text-gray-500'}`} />
+                                
+                                <p className="mt-4 text-lg font-semibold text-gray-900">
+                                    {file ? file.name : "Chọn hoặc kéo thả tệp bài kiểm tra (JPEG/PNG)"}
+                                </p>
+                                <p className="text-sm text-gray-500">
+                                    {file ? `Dung lượng: ${(file.size / 1024 / 1024).toFixed(2)} MB` : "Tối đa 5MB"}
+                                </p>
+                            </div>
+                            <input
+                                id="file-upload"
+                                type="file"
+                                accept="image/jpeg, image/png"
+                                onChange={handleFileChange}
+                                className="sr-only"
+                                disabled={loading}
+                            />
+                        </label>
+                    </div>
+
+                    {/* NÚT XỬ LÝ: Font lớn hơn, thêm trạng thái loading với SpinnerIcon */}
                     <button
                         onClick={handleSubmit}
                         disabled={!file || loading}
-                        className="w-full py-2.5 px-4 border border-transparent rounded-lg text-lg font-semibold text-white 
-                                   bg-blue-700 hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-300 transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="w-full py-3 px-4 border border-transparent rounded-xl text-xl font-bold text-white 
+                                   bg-blue-700 hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-300 transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed
+                                   flex items-center justify-center"
                     >
-                        {loading ? 'Đang xử lý...' : 'Xử Lý và Nhập Điểm'}
+                        {loading ? (
+                            <>
+                                <SpinnerIcon className="w-5 h-5 mr-3 animate-spin" />
+                                Đang xử lý...
+                            </>
+                        ) : 'Xử Lý và Nhập Điểm'}
                     </button>
                 </div>
                 
                 {/* HIỂN THỊ LỖI */}
                 {error && (
-                    <div className="mt-6 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg">
-                        <p className="font-medium">{error}</p>
+                    <div className="mt-8 p-4 bg-red-50 border border-red-300 text-red-600 rounded-lg shadow-sm">
+                        <p className="font-medium">Lỗi: {error}</p>
                     </div>
                 )}
 
-                {/* HIỂN THỊ KẾT QUẢ */}
+                {/* HIỂN THỊ KẾT QUẢ: Tăng font và margin */}
                 {results.length > 0 && (
-                    <div className="mt-8 pt-6 border-t border-gray-300">
-                        <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center">
-                            <ClipboardListIcon className="w-5 h-5 mr-2 text-blue-700" />
-                            Kết Quả Trích Xuất
+                    <div className="mt-10 pt-6 border-t border-gray-200">
+                        <h2 className="text-2xl font-bold text-gray-800 mb-5 flex items-center">
+                            <ClipboardListIcon className="w-6 h-6 mr-2 text-blue-700" />
+                            Kết Quả Trích Xuất Tự Động
                         </h2>
                         <ResultsTable results={results} />
                     </div>
