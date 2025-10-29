@@ -4,6 +4,7 @@ import React, { useState, useCallback, useMemo } from 'react';
 import { Result } from './types'; 
 import { generateGradeFromImage } from './GeminiService'; 
 import ResultsTable from './ResultsTable';
+// NHẬP CÁC ICON TỪ TỆP icons.tsx, thêm SpinnerIcon cho trạng thái loading
 import { UploadIcon, ClipboardListIcon, SparklesIcon, SpinnerIcon } from './icons'; 
 
 
@@ -12,9 +13,9 @@ const App: React.FC = () => {
     const [results, setResults] = useState<Result[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
-    
-    // THAY ĐỔI MỚI: Thêm state cho cột trích xuất thêm
-    const [additionalColumns, setAdditionalColumns] = useState<string>('Mã học sinh');
+
+    // CHỈNH SỬA: Đặt giá trị mặc định chính xác như trong hình ảnh
+    const [additionalColumns, setAdditionalColumns] = useState<string>('414141415151544 Mã học sinh');
 
 
     // Tạo URL xem trước cho hình ảnh đã chọn và dọn dẹp khi tệp thay đổi
@@ -75,16 +76,25 @@ const App: React.FC = () => {
             {/* CARD NỘI DUNG: CHẾ ĐỘ TỐI - Nền tối, shadow nhẹ */}
             <div className="max-w-4xl mx-auto bg-gray-800 shadow-2xl rounded-xl p-8 sm:p-10 border border-gray-700">
                 
+                {/* THANH ĐIỀU HƯỚNG MẪU */}
+                <div className="flex justify-between items-center mb-10">
+                    <h2 className="text-xl font-semibold text-gray-300">Gemini Test Score Extractor</h2>
+                    {/* Nút Chọn Màu Nhấn */}
+                    <button className="flex items-center text-white bg-blue-600 hover:bg-blue-700 rounded-full px-4 py-2 text-sm">
+                        Chọn Màu Nhấn: 
+                        <div className="w-4 h-4 rounded-full bg-indigo-400 ml-2 border-2 border-white"></div>
+                    </button>
+                </div>
+
                 {/* TIÊU ĐỀ: Màu Sáng/Deep Blue, căn giữa, font lớn hơn, thêm hiệu ứng nhẹ */}
                 <h1 className="text-4xl font-extrabold text-blue-400 text-center mb-2 flex items-center justify-center">
-                    <SparklesIcon className="w-8 h-8 mr-2 text-blue-500 animate-pulse" />
-                    Trích xuất điểm tự động (Gemini)
+                    Trích xuất điểm thi tự động (Gemini)
                 </h1>
                 <p className="text-center text-gray-400 mb-10 text-lg">
                     Ứng dụng đã được nâng cấp với khả năng phân tích và tùy chỉnh cột.
                 </p>
 
-                {/* KHU VỰC NHẬP CỘT THÊM */}
+                {/* KHU VỰC NHẬP CỘT THÊM - Đã chỉnh lại màu và text */}
                 <div className="mb-8">
                     <label htmlFor="additional-cols" className="block text-sm font-medium text-gray-300 mb-2">
                         Cột Cần Trích Xuất Thêm (Ngoài Tên & Điểm):
@@ -94,67 +104,65 @@ const App: React.FC = () => {
                         type="text"
                         value={additionalColumns}
                         onChange={(e) => setAdditionalColumns(e.target.value)}
-                        className="w-full px-4 py-3 border border-gray-600 rounded-lg text-lg 
+                        className="w-full px-4 py-3 border border-blue-500 rounded-lg text-lg 
                                    bg-gray-700 text-white placeholder-gray-500 
                                    focus:ring-blue-500 focus:border-blue-500"
                         placeholder="Mã học sinh, Môn học,..."
                     />
                      <p className="mt-2 text-sm text-gray-500">
-                        Thao tác này sẽ cập nhật tiêu đề bảng và dữ liệu CSV (lưu tự động).
+                        Theo thao tác này sẽ cập nhật tiêu đề bảng và dữ liệu CSV (lưu tự động).
                     </p>
                 </div>
 
 
-                {/* KHU VỰC UPLOAD VÀ XỬ LÝ */}
+                {/* KHU VỰC UPLOAD - Đã chuyển sang một vùng thả tệp duy nhất, lớn */}
                 <div className="space-y-8">
                     
-                    {/* INPUT/UPLOAD SECTION - Cải thiện giao diện responsive và trực quan */}
-                    <div className="flex flex-col md:flex-row gap-6">
-                         {/* Vùng xem trước tệp (Giữ nguyên cấu trúc nhưng đổi màu) */}
-                        <div className="w-full md:w-1/3 flex-shrink-0 bg-gray-700 rounded-xl p-4 flex items-center justify-center border-2 border-dashed border-gray-600">
-                            {filePreviewUrl ? (
-                                <img 
-                                    src={filePreviewUrl} 
-                                    alt="File Preview" 
-                                    className="max-h-52 object-contain rounded-md"
-                                />
+                    {/* Vùng Upload chính (Label) - KHU VỰC THẢ FILE LỚN */}
+                    <label 
+                        className={`w-full p-12 border-2 border-dashed rounded-xl transition duration-300 cursor-pointer block h-64 flex flex-col items-center justify-center
+                                   ${file 
+                                       ? 'border-blue-500 bg-gray-700' 
+                                       : 'border-blue-500 hover:bg-gray-700 bg-gray-900' // Sử dụng border-blue-500 (màu đậm) cho vùng drop zone theo mẫu
+                                   }`}
+                        htmlFor="file-upload"
+                    >
+                        <div className="text-center">
+                            {file ? (
+                                <>
+                                    <img 
+                                        src={filePreviewUrl || undefined} 
+                                        alt="File Preview" 
+                                        className="max-h-24 object-contain rounded-md mx-auto mb-4"
+                                    />
+                                    <p className="mt-4 text-lg font-semibold text-white">
+                                        {file.name}
+                                    </p>
+                                    <p className="text-sm text-gray-400">
+                                        Dung lượng: {(file.size / 1024 / 1024).toFixed(2)} MB
+                                    </p>
+                                </>
                             ) : (
-                                <div className="text-center text-gray-400 py-10">
-                                    <UploadIcon className="mx-auto w-10 h-10 mb-2 text-gray-500" />
-                                    <p>Chưa chọn tệp</p>
-                                </div>
+                                <>
+                                    <UploadIcon className="mx-auto w-12 h-12 text-gray-400" />
+                                    <p className="mt-4 text-lg font-semibold text-white">
+                                        Kéo và thả file tại đây
+                                    </p>
+                                    <button className="mt-2 px-6 py-2 border border-transparent text-sm font-medium rounded-full text-white bg-blue-600 hover:bg-blue-700 transition duration-150">
+                                        CHỌN FILE
+                                    </button>
+                                </>
                             )}
                         </div>
-
-                        {/* Vùng Upload chính (Label) - Thêm màu Dark Mode */}
-                        <label 
-                            className={`w-full md:w-2/3 p-6 border-2 border-dashed rounded-xl transition duration-300 cursor-pointer block 
-                                       ${file 
-                                           ? 'border-blue-500 bg-gray-700' // Khi có file
-                                           : 'border-gray-500 hover:border-blue-500 hover:bg-gray-700 bg-gray-800' // Không có file
-                                       }`}
-                            htmlFor="file-upload"
-                        >
-                            <div className="text-center">
-                                <UploadIcon className={`mx-auto w-12 h-12 ${file ? 'text-blue-400' : 'text-gray-500'}`} />
-                                
-                                <p className="mt-4 text-lg font-semibold text-white">
-                                    {file ? file.name : "Kéo và thả file tại đây"} 
-                                </p>
-                                <p className="text-sm text-gray-400">
-                                    {file ? `Dung lượng: ${(file.size / 1024 / 1024).toFixed(2)} MB` : "CHỌN FILE"}
-                                </p>
-                            </div>
-                            <input
-                                id="file-upload"
-                                type="file"
-                                accept="image/jpeg, image/png"
-                                onChange={handleFileChange}
-                                className="sr-only"
-                                disabled={loading}
-                            />
-                        </label>
-                    </div>
+                        <input
+                            id="file-upload"
+                            type="file"
+                            accept="image/jpeg, image/png"
+                            onChange={handleFileChange}
+                            className="sr-only"
+                            disabled={loading}
+                        />
+                    </label>
 
                     {/* NÚT XỬ LÝ: Font lớn hơn, thêm trạng thái loading với SpinnerIcon */}
                     <button
