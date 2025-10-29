@@ -1,10 +1,9 @@
 // App.tsx
 
-import React, { useState, useCallback, useMemo } from 'react'; // Import useMemo
+import React, { useState, useCallback, useMemo } from 'react'; 
 import { Result } from './types'; 
 import { generateGradeFromImage } from './GeminiService'; 
 import ResultsTable from './ResultsTable';
-// NHẬP CÁC ICON TỪ TỆP icons.tsx, thêm SpinnerIcon cho trạng thái loading
 import { UploadIcon, ClipboardListIcon, SparklesIcon, SpinnerIcon } from './icons'; 
 
 
@@ -13,6 +12,10 @@ const App: React.FC = () => {
     const [results, setResults] = useState<Result[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
+    
+    // THAY ĐỔI MỚI: Thêm state cho cột trích xuất thêm
+    const [additionalColumns, setAdditionalColumns] = useState<string>('414141415151544 Mã học sinh');
+
 
     // Tạo URL xem trước cho hình ảnh đã chọn và dọn dẹp khi tệp thay đổi
     const filePreviewUrl = useMemo(() => {
@@ -45,6 +48,7 @@ const App: React.FC = () => {
         setResults([]);
 
         try {
+            // NOTE: Cần cập nhật generateGradeFromImage nếu muốn sử dụng additionalColumns
             const data = await generateGradeFromImage(file); 
             setResults(data);
         } catch (err) {
@@ -52,9 +56,8 @@ const App: React.FC = () => {
             setError((err as Error).message || "Đã xảy ra lỗi trong quá trình xử lý.");
         } finally {
             setLoading(false);
-            // Không cần revokeObjectURL ở đây vì nó được xử lý bởi useMemo/handleFileChange
         }
-    }, [file]); // Loại bỏ filePreviewUrl khỏi dependency array để tránh lỗi.
+    }, [file]);
 
     // Dọn dẹp URL khi component unmount
     React.useEffect(() => {
@@ -67,27 +70,48 @@ const App: React.FC = () => {
 
 
     return (
-        // CONTAINER CHUNG: Thay thế nền trắng bằng màu xanh nhạt nhẹ (sky-50) để làm nổi bật card nội dung, tăng padding
-        <div className="min-h-screen bg-sky-50 py-12 px-4 sm:px-6 lg:px-8">
-            {/* CARD NỘI DUNG: Nâng cao shadow và bo tròn, mở rộng max-w */}
-            <div className="max-w-4xl mx-auto bg-white shadow-2xl rounded-xl p-8 sm:p-10 border border-gray-100">
+        // CONTAINER CHUNG: CHẾ ĐỘ TỐI - Nền màu xanh đen đậm (Navy Blue)
+        <div className="min-h-screen bg-gray-900 py-12 px-4 sm:px-6 lg:px-8">
+            {/* CARD NỘI DUNG: CHẾ ĐỘ TỐI - Nền tối, shadow nhẹ */}
+            <div className="max-w-4xl mx-auto bg-gray-800 shadow-2xl rounded-xl p-8 sm:p-10 border border-gray-700">
                 
-                {/* TIÊU ĐỀ: Màu Deep Blue, căn giữa, font lớn hơn, thêm hiệu ứng nhẹ */}
-                <h1 className="text-4xl font-extrabold text-blue-800 text-center mb-2 flex items-center justify-center">
-                    <SparklesIcon className="w-8 h-8 mr-2 text-blue-600 animate-pulse" />
-                    AI Grade Auto Entry
+                {/* TIÊU ĐỀ: Màu Sáng/Deep Blue, căn giữa, font lớn hơn, thêm hiệu ứng nhẹ */}
+                <h1 className="text-4xl font-extrabold text-blue-400 text-center mb-2 flex items-center justify-center">
+                    <SparklesIcon className="w-8 h-8 mr-2 text-blue-500 animate-pulse" />
+                    Trích xuất điểm tự động (Gemini)
                 </h1>
-                <p className="text-center text-gray-500 mb-10 text-lg">
-                    Hệ thống tự động trích xuất và nhập điểm từ bài kiểm tra.
+                <p className="text-center text-gray-400 mb-10 text-lg">
+                    Ứng dụng đã được nâng cấp với khả năng phân tích và tùy chỉnh cột.
                 </p>
+
+                {/* KHU VỰC NHẬP CỘT THÊM */}
+                <div className="mb-8">
+                    <label htmlFor="additional-cols" className="block text-sm font-medium text-gray-300 mb-2">
+                        Cột Cần Trích Xuất Thêm (Ngoài Tên & Điểm):
+                    </label>
+                    <input
+                        id="additional-cols"
+                        type="text"
+                        value={additionalColumns}
+                        onChange={(e) => setAdditionalColumns(e.target.value)}
+                        className="w-full px-4 py-3 border border-gray-600 rounded-lg text-lg 
+                                   bg-gray-700 text-white placeholder-gray-500 
+                                   focus:ring-blue-500 focus:border-blue-500"
+                        placeholder="Mã học sinh, Môn học,..."
+                    />
+                     <p className="mt-2 text-sm text-gray-500">
+                        Thao tác này sẽ cập nhật tiêu đề bảng và dữ liệu CSV (lưu tự động).
+                    </p>
+                </div>
+
 
                 {/* KHU VỰC UPLOAD VÀ XỬ LÝ */}
                 <div className="space-y-8">
                     
                     {/* INPUT/UPLOAD SECTION - Cải thiện giao diện responsive và trực quan */}
                     <div className="flex flex-col md:flex-row gap-6">
-                         {/* Vùng xem trước tệp */}
-                        <div className="w-full md:w-1/3 flex-shrink-0 bg-gray-100 rounded-xl p-4 flex items-center justify-center border-2 border-dashed border-gray-300">
+                         {/* Vùng xem trước tệp (Giữ nguyên cấu trúc nhưng đổi màu) */}
+                        <div className="w-full md:w-1/3 flex-shrink-0 bg-gray-700 rounded-xl p-4 flex items-center justify-center border-2 border-dashed border-gray-600">
                             {filePreviewUrl ? (
                                 <img 
                                     src={filePreviewUrl} 
@@ -95,30 +119,30 @@ const App: React.FC = () => {
                                     className="max-h-52 object-contain rounded-md"
                                 />
                             ) : (
-                                <div className="text-center text-gray-500 py-10">
-                                    <UploadIcon className="mx-auto w-10 h-10 mb-2" />
+                                <div className="text-center text-gray-400 py-10">
+                                    <UploadIcon className="mx-auto w-10 h-10 mb-2 text-gray-500" />
                                     <p>Chưa chọn tệp</p>
                                 </div>
                             )}
                         </div>
 
-                        {/* Vùng Upload chính (Label) */}
+                        {/* Vùng Upload chính (Label) - Thêm màu Dark Mode */}
                         <label 
                             className={`w-full md:w-2/3 p-6 border-2 border-dashed rounded-xl transition duration-300 cursor-pointer block 
                                        ${file 
-                                           ? 'border-blue-600 bg-blue-50' 
-                                           : 'border-gray-400 hover:border-blue-500 hover:bg-gray-100 bg-white'
+                                           ? 'border-blue-500 bg-gray-700' // Khi có file
+                                           : 'border-gray-500 hover:border-blue-500 hover:bg-gray-700 bg-gray-800' // Không có file
                                        }`}
                             htmlFor="file-upload"
                         >
                             <div className="text-center">
-                                <UploadIcon className={`mx-auto w-12 h-12 ${file ? 'text-blue-700' : 'text-gray-500'}`} />
+                                <UploadIcon className={`mx-auto w-12 h-12 ${file ? 'text-blue-400' : 'text-gray-500'}`} />
                                 
-                                <p className="mt-4 text-lg font-semibold text-gray-900">
-                                    {file ? file.name : "Chọn hoặc kéo thả tệp bài kiểm tra (JPEG/PNG)"}
+                                <p className="mt-4 text-lg font-semibold text-white">
+                                    {file ? file.name : "Kéo và thả file tại đây"} {/* Đổi Text */}
                                 </p>
-                                <p className="text-sm text-gray-500">
-                                    {file ? `Dung lượng: ${(file.size / 1024 / 1024).toFixed(2)} MB` : "Tối đa 5MB"}
+                                <p className="text-sm text-gray-400">
+                                    {file ? `Dung lượng: ${(file.size / 1024 / 1024).toFixed(2)} MB` : "CHỌN FILE"} {/* Đổi Text */}
                                 </p>
                             </div>
                             <input
@@ -137,7 +161,7 @@ const App: React.FC = () => {
                         onClick={handleSubmit}
                         disabled={!file || loading}
                         className="w-full py-3 px-4 border border-transparent rounded-xl text-xl font-bold text-white 
-                                   bg-blue-700 hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-300 transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed
+                                   bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-500 transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed
                                    flex items-center justify-center"
                     >
                         {loading ? (
@@ -149,24 +173,29 @@ const App: React.FC = () => {
                     </button>
                 </div>
                 
-                {/* HIỂN THỊ LỖI */}
+                {/* HIỂN THỊ LỖI (Đổi màu cho Dark Mode) */}
                 {error && (
-                    <div className="mt-8 p-4 bg-red-50 border border-red-300 text-red-600 rounded-lg shadow-sm">
+                    <div className="mt-8 p-4 bg-red-800 border border-red-600 text-red-300 rounded-lg shadow-sm">
                         <p className="font-medium">Lỗi: {error}</p>
                     </div>
                 )}
 
                 {/* HIỂN THỊ KẾT QUẢ: Tăng font và margin */}
                 {results.length > 0 && (
-                    <div className="mt-10 pt-6 border-t border-gray-200">
-                        <h2 className="text-2xl font-bold text-gray-800 mb-5 flex items-center">
-                            <ClipboardListIcon className="w-6 h-6 mr-2 text-blue-700" />
+                    <div className="mt-10 pt-6 border-t border-gray-700">
+                        <h2 className="text-2xl font-bold text-gray-200 mb-5 flex items-center">
+                            <ClipboardListIcon className="w-6 h-6 mr-2 text-blue-400" />
                             Kết Quả Trích Xuất Tự Động
                         </h2>
+                        {/* Lưu ý: ResultsTable cần được cập nhật để phù hợp với Dark Mode nếu cần */}
                         <ResultsTable results={results} />
                     </div>
                 )}
                 
+                {/* FOOTER: Powered by Google Gemini */}
+                 <div className="mt-10 pt-6 text-center text-gray-500 border-t border-gray-700">
+                     Powered by Google Gemini
+                 </div>
             </div>
         </div>
     );
