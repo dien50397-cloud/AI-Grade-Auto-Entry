@@ -2,9 +2,9 @@
 
 import React from 'react';
 import { Result } from './types'; 
-import { CsvIcon } from './icons'; // Nhập Icon
+import { CsvIcon } from './icons'; 
 
-// Hàm chuyển đổi dữ liệu thành CSV
+// Hàm chuyển đổi dữ liệu thành CSV (Không thay đổi)
 const convertToCSV = (data: Result[]): string => {
     const headers = ["Tên Học Sinh", "Môn Học", "Điểm Cuối Cùng"];
     const csvRows = [];
@@ -55,22 +55,25 @@ const ResultsTable: React.FC<{ results: Result[] }> = ({ results }) => {
     };
 
     return (
-        <div className="shadow-lg overflow-hidden rounded-md border border-gray-300">
-            {/* Nút Export */}
-            <div className="flex justify-end p-2 bg-gray-50 border-b border-gray-300">
+        // ĐỔI MÀU CHO DARK MODE
+        <div className="shadow-lg overflow-hidden rounded-md border border-gray-700">
+            {/* Nút Export - ĐỔI MÀU CHO DARK MODE */}
+            <div className="flex justify-end p-2 bg-gray-700 border-b border-gray-600">
                  <button
                     onClick={handleExport}
-                    className="flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 shadow-sm transition duration-150"
+                    // Dùng màu sáng hơn cho nút Export để nổi bật trên nền tối
+                    className="flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-green-500 hover:bg-green-600 shadow-sm transition duration-150"
                  >
-                    <CsvIcon className="w-4 h-4 mr-2" /> {/* Thêm Icon CSV */}
+                    <CsvIcon className="w-4 h-4 mr-2" />
                     Xuất CSV
                  </button>
             </div>
 
             <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
+                {/* Đổi màu đường chia của bảng */}
+                <table className="min-w-full divide-y divide-gray-700">
                     
-                    {/* ĐẦU BẢNG: Màu Deep Blue */}
+                    {/* ĐẦU BẢNG: Giữ màu Blue đậm để làm nổi bật */}
                     <thead className="bg-blue-800">
                         <tr>
                             <th className="px-5 py-2 text-left text-xs font-medium text-white uppercase tracking-wider">
@@ -85,22 +88,24 @@ const ResultsTable: React.FC<{ results: Result[] }> = ({ results }) => {
                         </tr>
                     </thead>
                     
-                    {/* THÂN BẢNG: Hàng xen kẽ màu */}
-                    <tbody className="bg-white divide-y divide-gray-200">
+                    {/* THÂN BẢNG: Hàng xen kẽ màu Dark Mode */}
+                    <tbody className="bg-gray-800 divide-y divide-gray-700">
                         {results.map((item, index) => (
                             <tr 
                                 key={index} 
-                                // Hàng xen kẽ màu
-                                className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50 hover:bg-gray-100 transition duration-100'}
+                                // Hàng xen kẽ màu Dark Mode: Hàng chẵn (index % 2 === 0) màu nền đậm, hàng lẻ màu nền sáng hơn
+                                className={index % 2 === 0 ? 'bg-gray-800' : 'bg-gray-700 hover:bg-gray-600 transition duration-100'}
                             >
-                                <td className="px-5 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                                {/* Tên Học Sinh: Màu trắng */}
+                                <td className="px-5 py-3 whitespace-nowrap text-sm font-medium text-white">
                                     {item.student_name}
                                 </td>
-                                <td className="px-5 py-3 whitespace-nowrap text-sm text-gray-600">
+                                {/* Môn Học: Màu xám nhạt */}
+                                <td className="px-5 py-3 whitespace-nowrap text-sm text-gray-400">
                                     {item.subject}
                                 </td>
-                                {/* Điểm Cuối Cùng: Màu Deep Blue */}
-                                <td className="px-5 py-3 whitespace-nowrap text-base font-extrabold text-blue-700">
+                                {/* Điểm Cuối Cùng: Màu Xanh Sáng cho Dark Mode */}
+                                <td className="px-5 py-3 whitespace-nowrap text-base font-extrabold text-blue-400">
                                     {item.final_score}
                                 </td>
                             </tr>
