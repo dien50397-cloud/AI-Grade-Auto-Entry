@@ -14,7 +14,7 @@ const App: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     
     // THAY ĐỔI MỚI: Thêm state cho cột trích xuất thêm
-    const [additionalColumns, setAdditionalColumns] = useState<string>('414141415151544 Mã học sinh');
+    const [additionalColumns, setAdditionalColumns] = useState<string>('Mã học sinh');
 
 
     // Tạo URL xem trước cho hình ảnh đã chọn và dọn dẹp khi tệp thay đổi
@@ -139,10 +139,10 @@ const App: React.FC = () => {
                                 <UploadIcon className={`mx-auto w-12 h-12 ${file ? 'text-blue-400' : 'text-gray-500'}`} />
                                 
                                 <p className="mt-4 text-lg font-semibold text-white">
-                                    {file ? file.name : "Kéo và thả file tại đây"} {/* Đổi Text */}
+                                    {file ? file.name : "Kéo và thả file tại đây"} 
                                 </p>
                                 <p className="text-sm text-gray-400">
-                                    {file ? `Dung lượng: ${(file.size / 1024 / 1024).toFixed(2)} MB` : "CHỌN FILE"} {/* Đổi Text */}
+                                    {file ? `Dung lượng: ${(file.size / 1024 / 1024).toFixed(2)} MB` : "CHỌN FILE"}
                                 </p>
                             </div>
                             <input
@@ -187,7 +187,6 @@ const App: React.FC = () => {
                             <ClipboardListIcon className="w-6 h-6 mr-2 text-blue-400" />
                             Kết Quả Trích Xuất Tự Động
                         </h2>
-                        {/* Lưu ý: ResultsTable cần được cập nhật để phù hợp với Dark Mode nếu cần */}
                         <ResultsTable results={results} />
                     </div>
                 )}
