@@ -1,0 +1,18 @@
+/* index.css */
+
+/* * Ba chỉ thị này là bắt buộc để Tailwind CSS hoạt động. 
+ * Chúng được Tailwind xử lý trong quá trình xây dựng (build) để chèn tất cả 
+ * các lớp tiện ích (utility classes) mà bạn sử dụng trong dự án.
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* * THÊM: Có thể thêm một vài định kiểu cơ bản ở đây để đảm bảo 
+ * reset CSS cho toàn bộ trang nếu cần, ví dụ: 
+ */
+/* body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+*/
